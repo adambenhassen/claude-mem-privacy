@@ -111,6 +111,8 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_CONTEXT_SHOW_LAST_SUMMARY',
       'CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE',
       'CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED',
+      'CLAUDE_MEM_ALLOWED_PROJECTS',
+      'CLAUDE_MEM_EXCLUDED_PROJECTS',
     ];
 
     for (const key of settingKeys) {

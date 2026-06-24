@@ -74,3 +74,31 @@ export function isProjectExcluded(projectPath: string, exclusionPatterns: string
 
   return false;
 }
+
+export function isProjectAllowed(projectPath: string, allowPatterns: string): boolean {
+  if (!allowPatterns || !allowPatterns.trim()) {
+    return true;
+  }
+
+  const normalizedProjectPath = projectPath.replace(/\\/g, '/');
+  const projectBasename = basename(normalizedProjectPath);
+
+  const patternList = allowPatterns
+    .split(',')
+    .map(p => p.trim())
+    .filter(Boolean);
+
+  for (const pattern of patternList) {
+    try {
+      const regex = globToRegex(pattern);
+      if (regex.test(normalizedProjectPath) || regex.test(projectBasename)) {
+        return true;
+      }
+    } catch (error: unknown) {
+      logger.warn('PROJECT_NAME', 'Invalid allow pattern', { pattern, error: error instanceof Error ? error.message : String(error) });
+      continue;
+    }
+  }
+
+  return false;
+}

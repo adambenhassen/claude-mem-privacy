@@ -1,6 +1,6 @@
 
 import { describe, it, expect } from 'bun:test';
-import { isProjectExcluded } from '../../src/utils/project-filter.js';
+import { isProjectExcluded, isProjectAllowed } from '../../src/utils/project-filter.js';
 import { homedir } from 'os';
 
 describe('Project Filter', () => {
@@ -84,6 +84,36 @@ describe('Project Filter', () => {
         expect(isProjectExcluded('/tmp/scratch', patterns)).toBe(true);
         expect(isProjectExcluded('/var/tmp/test', patterns)).toBe(true);
         expect(isProjectExcluded('/home/user/tmp', patterns)).toBe(false);
+      });
+    });
+  });
+
+  describe('isProjectAllowed', () => {
+    describe('with empty patterns', () => {
+      it('returns true when no allow-list is configured', () => {
+        expect(isProjectAllowed('/Users/test/project', '')).toBe(true);
+        expect(isProjectAllowed('/Users/test/project', '   ')).toBe(true);
+      });
+    });
+
+    describe('with patterns configured', () => {
+      it('returns true when the path matches a pattern', () => {
+        expect(isProjectAllowed('/Users/test/work/app', '/Users/test/work/*')).toBe(true);
+      });
+
+      it('returns false when the path matches no pattern', () => {
+        expect(isProjectAllowed('/Users/test/personal/app', '/Users/test/work/*')).toBe(false);
+      });
+
+      it('returns true if any of multiple patterns matches', () => {
+        const patterns = '/Users/test/work/*,~/clients/**';
+        expect(isProjectAllowed('/Users/test/work/app', patterns)).toBe(true);
+        expect(isProjectAllowed(`${homedir()}/clients/acme/site`, patterns)).toBe(true);
+        expect(isProjectAllowed('/Users/test/personal/app', patterns)).toBe(false);
+      });
+
+      it('matches against the basename', () => {
+        expect(isProjectAllowed('/any/depth/my-allowed-repo', 'my-allowed-repo')).toBe(true);
       });
     });
   });

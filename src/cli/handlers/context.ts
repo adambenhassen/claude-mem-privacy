@@ -15,10 +15,23 @@ import { HOOK_EXIT_CODES } from '../../shared/hook-constants.js';
 import { logger } from '../../utils/logger.js';
 import { loadFromFileOnce } from '../../shared/hook-settings.js';
 import { readStaleMarker } from '../../shared/oauth-token.js';
+import { shouldTrackProject } from '../../shared/should-track-project.js';
 
 export const contextHandler: EventHandler = {
   async execute(input: NormalizedHookInput): Promise<HookResult> {
     const cwd = input.cwd ?? process.cwd();
+
+    const emptyResult: HookResult = {
+      hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: '' },
+      exitCode: HOOK_EXIT_CODES.SUCCESS,
+    };
+
+    // Respect project filtering: an excluded or non-allow-listed project must
+    // not get memory injected at SessionStart, mirroring the write-side gate.
+    if (!shouldTrackProject(cwd)) {
+      return emptyResult;
+    }
+
     const context = getProjectContext(cwd);
     const port = getWorkerPort();
 
@@ -28,11 +41,6 @@ export const contextHandler: EventHandler = {
     const projectsParam = context.allProjects.join(',');
     const apiPath = `/api/context/inject?projects=${encodeURIComponent(projectsParam)}`;
     const colorApiPath = input.platform === 'claude-code' ? `${apiPath}&colors=true` : apiPath;
-
-    const emptyResult: HookResult = {
-      hookSpecificOutput: { hookEventName: 'SessionStart', additionalContext: '' },
-      exitCode: HOOK_EXIT_CODES.SUCCESS,
-    };
 
     const contextResult = await executeWithWorkerFallback<string>(apiPath, 'GET');
     if (isWorkerFallback(contextResult)) {

@@ -476,6 +476,35 @@ export function ContextSettingsModal({
                 />
               </div>
             </CollapsibleSection>
+
+            <CollapsibleSection
+              title="Project Filtering"
+              description="Limit which project directories claude-mem tracks"
+              defaultOpen={false}
+            >
+              <FormField
+                label="Allow-list"
+                tooltip="Comma-separated glob patterns. When non-empty, only matching project paths are tracked. Supports *, **, ?, and a leading ~. Leave empty to track all projects."
+              >
+                <input
+                  type="text"
+                  placeholder="e.g. ~/work/*,~/clients/**"
+                  value={formState.CLAUDE_MEM_ALLOWED_PROJECTS || ''}
+                  onChange={(e) => updateSetting('CLAUDE_MEM_ALLOWED_PROJECTS', e.target.value)}
+                />
+              </FormField>
+              <FormField
+                label="Exclude-list"
+                tooltip="Comma-separated glob patterns. Matching project paths are never tracked (takes precedence over the allow-list). Supports *, **, ?, and a leading ~."
+              >
+                <input
+                  type="text"
+                  placeholder="e.g. /tmp/*,/scratch/*"
+                  value={formState.CLAUDE_MEM_EXCLUDED_PROJECTS || ''}
+                  onChange={(e) => updateSetting('CLAUDE_MEM_EXCLUDED_PROJECTS', e.target.value)}
+                />
+              </FormField>
+            </CollapsibleSection>
           </div>
         </div>
 

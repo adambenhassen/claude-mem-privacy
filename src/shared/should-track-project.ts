@@ -1,6 +1,6 @@
 
 import { relative, isAbsolute, normalize } from 'path';
-import { isProjectExcluded } from '../utils/project-filter.js';
+import { isProjectExcluded, isProjectAllowed } from '../utils/project-filter.js';
 import { loadFromFileOnce } from './hook-settings.js';
 import { OBSERVER_SESSIONS_DIR, OBSERVER_SESSIONS_PROJECT } from './paths.js';
 
@@ -19,6 +19,9 @@ export function shouldTrackProject(cwd: string): boolean {
     return false;
   }
   const settings = loadFromFileOnce();
+  if (!isProjectAllowed(cwd, settings.CLAUDE_MEM_ALLOWED_PROJECTS)) {
+    return false;
+  }
   return !isProjectExcluded(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS);
 }
 

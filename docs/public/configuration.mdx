@@ -65,6 +65,8 @@ Use [LiteLLM Gateway](configuration/litellm-gateway) when you want `CLAUDE_MEM_P
 | `CLAUDE_MEM_LOG_LEVEL`        | `INFO`                          | Log verbosity (DEBUG, INFO, WARN, ERROR, SILENT) |
 | `CLAUDE_MEM_PYTHON_VERSION`   | `3.13`                          | Python version for chroma-mcp         |
 | `CLAUDE_CODE_PATH`            | _(auto-detect)_                 | Path to Claude Code CLI (for Windows) |
+| `CLAUDE_MEM_ALLOWED_PROJECTS` | _(empty)_                       | Comma-separated glob patterns; when set, only matching project paths are tracked |
+| `CLAUDE_MEM_EXCLUDED_PROJECTS` | _(empty)_                      | Comma-separated glob patterns; matching project paths are never tracked (overrides the allow-list) |
 
 ## Model Configuration
 

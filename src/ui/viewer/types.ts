@@ -91,4 +91,7 @@ export interface Settings {
 
   CLAUDE_MEM_CONTEXT_SHOW_LAST_SUMMARY?: string;
   CLAUDE_MEM_CONTEXT_SHOW_LAST_MESSAGE?: string;
+
+  CLAUDE_MEM_ALLOWED_PROJECTS?: string;
+  CLAUDE_MEM_EXCLUDED_PROJECTS?: string;
 }

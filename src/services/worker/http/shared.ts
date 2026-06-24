@@ -5,7 +5,7 @@ import type { DatabaseManager } from '../DatabaseManager.js';
 import type { SessionEventBroadcaster } from '../events/SessionEventBroadcaster.js';
 import type { ParsedSummary } from '../../../sdk/parser.js';
 import { stripMemoryTagsFromJson } from '../../../utils/tag-stripping.js';
-import { isProjectExcluded } from '../../../utils/project-filter.js';
+import { isProjectExcluded, isProjectAllowed } from '../../../utils/project-filter.js';
 import { SettingsDefaultsManager } from '../../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../../shared/paths.js';
 import { getProjectContext } from '../../../utils/project-name.js';
@@ -63,6 +63,10 @@ export async function ingestObservation(payload: ObservationPayload): Promise<In
   const project = cwd.trim() ? getProjectContext(cwd).primary : '';
 
   const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+
+  if (cwd && !isProjectAllowed(cwd, settings.CLAUDE_MEM_ALLOWED_PROJECTS)) {
+    return { ok: true, status: 'skipped', reason: 'project_not_allowed' };
+  }
 
   if (cwd && isProjectExcluded(cwd, settings.CLAUDE_MEM_EXCLUDED_PROJECTS)) {
     return { ok: true, status: 'skipped', reason: 'project_excluded' };

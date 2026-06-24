@@ -138,12 +138,18 @@ Higher-scoring observations appear first in the timeline. An observation where t
 
 Files smaller than **1,500 bytes** always pass through the gate without interception. At that size, the timeline (~370 tokens) would cost more than reading the file directly. This threshold is hardcoded in `src/cli/handlers/file-context.ts`.
 
-### Project Exclusions
+### Project Filtering
 
-Projects matching patterns in `CLAUDE_MEM_EXCLUDED_PROJECTS` skip the gate entirely. Configure this in `~/.claude-mem/settings.json`:
+By default claude-mem tracks every project. Two settings narrow this:
+
+- `CLAUDE_MEM_ALLOWED_PROJECTS` — when non-empty, **only** project paths matching one of its patterns are tracked.
+- `CLAUDE_MEM_EXCLUDED_PROJECTS` — project paths matching one of its patterns are never tracked. Exclusions take precedence over the allow-list.
+
+Both accept comma-separated glob patterns (`*`, `**`, `?`, and a leading `~`). Configure them in `~/.claude-mem/settings.json` or via the viewer's Settings → Project Filtering panel:
 
 ```json
 {
+  "CLAUDE_MEM_ALLOWED_PROJECTS": "~/work/*,~/clients/**",
   "CLAUDE_MEM_EXCLUDED_PROJECTS": "/tmp/*,/scratch/*"
 }
 ```
