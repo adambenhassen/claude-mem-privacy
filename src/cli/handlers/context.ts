@@ -8,7 +8,6 @@ import type { EventHandler, NormalizedHookInput, HookResult } from '../types.js'
 import {
   executeWithWorkerFallback,
   isWorkerFallback,
-  getWorkerPort,
 } from '../../shared/worker-utils.js';
 import { getProjectContext } from '../../utils/project-name.js';
 import { HOOK_EXIT_CODES } from '../../shared/hook-constants.js';
@@ -33,14 +32,17 @@ export const contextHandler: EventHandler = {
     }
 
     const context = getProjectContext(cwd);
-    const port = getWorkerPort();
 
     const settings = loadFromFileOnce();
     const showTerminalOutput = settings.CLAUDE_MEM_CONTEXT_SHOW_TERMINAL_OUTPUT === 'true';
 
     const projectsParam = context.allProjects.join(',');
     const apiPath = `/api/context/inject?projects=${encodeURIComponent(projectsParam)}`;
-    const colorApiPath = input.platform === 'claude-code' ? `${apiPath}&colors=true` : apiPath;
+    // Terminal session-start output shows only the Context Economics block, not
+    // the full colored timeline (which is large enough to trip the harness's
+    // "Output too large" persistence). The model still receives full context
+    // via additionalContext below.
+    const colorApiPath = input.platform === 'claude-code' ? `${apiPath}&colors=true&economics=true` : apiPath;
 
     const contextResult = await executeWithWorkerFallback<string>(apiPath, 'GET');
     if (isWorkerFallback(contextResult)) {
@@ -81,10 +83,15 @@ export const contextHandler: EventHandler = {
     const displayContent = coloredTimeline || (platform === 'gemini-cli' || platform === 'gemini' ? additionalContext : '');
 
     const systemMessage = showTerminalOutput && displayContent
-      ? `${displayContent}\n\nView Observations Live @ http://localhost:${port}`
+      ? displayContent
       : undefined;
 
     return {
+      // The additionalContext payload (memory legend) is large; without this
+      // the harness renders an "Output too large (NN KB)" notice in place of
+      // the raw hook stdout. additionalContext is still injected and any
+      // systemMessage still shown — suppressOutput only hides the stdout dump.
+      suppressOutput: true,
       hookSpecificOutput: {
         hookEventName: 'SessionStart',
         additionalContext

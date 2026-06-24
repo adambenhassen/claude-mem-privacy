@@ -28,6 +28,9 @@ export const claudeCodeAdapter: PlatformAdapter = {
     const r = result ?? ({} as HookResult);
     if (r.hookSpecificOutput) {
       const output: Record<string, unknown> = { hookSpecificOutput: result.hookSpecificOutput };
+      if (r.suppressOutput) {
+        output.suppressOutput = true;
+      }
       if (r.systemMessage) {
         output.systemMessage = r.systemMessage;
       }

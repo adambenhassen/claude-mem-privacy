@@ -7,6 +7,9 @@ export interface ContextInput {
   source?: "startup" | "resume" | "clear" | "compact";
   projects?: string[];
   full?: boolean;
+  // When set, the build returns ONLY the Context Economics block (no header,
+  // legend, timeline, or footer). Used for the terminal session-start summary.
+  economicsOnly?: boolean;
   [key: string]: any;
 }
 

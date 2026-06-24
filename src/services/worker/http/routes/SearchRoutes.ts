@@ -379,6 +379,7 @@ export class SearchRoutes extends BaseRouteHandler {
     const projectsParam = (req.query.projects as string) || (req.query.project as string);
     const forHuman = req.query.colors === 'true';
     const full = req.query.full === 'true';
+    const economicsOnly = req.query.economics === 'true';
 
     if (!projectsParam) {
       this.badRequest(res, 'Project(s) parameter is required');
@@ -426,7 +427,8 @@ export class SearchRoutes extends BaseRouteHandler {
           session_id: 'context-inject-' + Date.now(),
           cwd: cwd,
           projects: projects,
-          full
+          full,
+          economicsOnly
         },
         forHuman
       );

@@ -8,7 +8,7 @@ import { getProjectContext } from '../../utils/project-name.js';
 
 import type { ContextInput, ContextConfig, Observation, SessionSummary } from './types.js';
 import { loadContextConfig } from './ContextConfigLoader.js';
-import { calculateTokenEconomics } from './TokenCalculator.js';
+import { calculateTokenEconomics, shouldShowContextEconomics } from './TokenCalculator.js';
 import {
   queryObservations,
   queryObservationsMulti,
@@ -23,8 +23,8 @@ import { renderHeader } from './sections/HeaderRenderer.js';
 import { renderTimeline } from './sections/TimelineRenderer.js';
 import { shouldShowSummary, renderSummaryFields } from './sections/SummaryRenderer.js';
 import { renderPreviouslySection, renderFooter } from './sections/FooterRenderer.js';
-import { renderAgentEmptyState } from './formatters/AgentFormatter.js';
-import { renderHumanEmptyState } from './formatters/HumanFormatter.js';
+import { renderAgentEmptyState, renderAgentContextEconomics } from './formatters/AgentFormatter.js';
+import { renderHumanEmptyState, renderHumanContextEconomics } from './formatters/HumanFormatter.js';
 
 const VERSION_MARKER_PATH = path.join(
   homedir(),
@@ -68,11 +68,24 @@ function buildContextOutput(
   config: ContextConfig,
   cwd: string,
   sessionId: string | undefined,
-  forHuman: boolean
+  forHuman: boolean,
+  economicsOnly: boolean = false
 ): string {
   const output: string[] = [];
 
   const economics = calculateTokenEconomics(observations);
+
+  // economicsOnly: terminal session-start summary wants just the four-line
+  // Context Economics block, not the full header/timeline/footer render.
+  if (economicsOnly) {
+    if (!shouldShowContextEconomics(config)) {
+      return '';
+    }
+    const lines = forHuman
+      ? renderHumanContextEconomics(economics, config)
+      : renderAgentContextEconomics(economics, config);
+    return lines.join('\n').trimEnd();
+  }
 
   output.push(...renderHeader(project, economics, config, forHuman));
 
@@ -199,7 +212,8 @@ export async function generateContextWithStats(
       config,
       cwd,
       input?.session_id,
-      forHuman
+      forHuman,
+      input?.economicsOnly
     );
 
     return { text: output, stats: buildInjectStats(observations, summaries, Boolean(input?.full)) };
