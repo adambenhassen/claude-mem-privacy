@@ -5,7 +5,7 @@ import { redactForLLMDeep } from '../../src/shared/redaction/index';
 import { PresidioManager } from '../../src/services/redaction/PresidioManager';
 
 class FakeChild extends EventEmitter {
-  pid = 99;
+  pid = 999999999; // non-existent PID: tree-kill's process.kill hits ESRCH safely
   stdout = new EventEmitter();
   stderr = new EventEmitter();
   stdin = {

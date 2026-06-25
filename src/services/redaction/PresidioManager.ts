@@ -10,9 +10,13 @@
  *    disables itself for the rest of the process (logs once).
  */
 
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, execFile, type ChildProcess } from 'node:child_process';
+import { promisify } from 'node:util';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
+
+const execFileAsync = promisify(execFile);
+const SCRIPT_NAME = 'presidio_service.py';
 import { MARKETPLACE_ROOT } from '../../shared/paths.js';
 import { logger } from '../../utils/logger.js';
 import { getPresidioConfig, type PresidioConfig } from '../../shared/redaction/config.js';
@@ -41,6 +45,7 @@ function resolveScriptPath(): string {
 export class PresidioManager {
   private static instance: PresidioManager | null = null;
   private static spawnFn: SpawnFn | null = null;
+  private static swept = false;
 
   private child: ChildProcess | null = null;
   private starting: Promise<boolean> | null = null;
@@ -80,6 +85,14 @@ export class PresidioManager {
     if (this.ready && this.child) return true;
     if (this.starting) return this.starting;
 
+    // Once per process, before our first spawn, reap any sidecar trees orphaned
+    // by a prior worker that died ungracefully. Safe here: we have not spawned
+    // our own sidecar yet, so every presidio_service.py is stale.
+    if (!PresidioManager.swept && !PresidioManager.spawnFn) {
+      PresidioManager.swept = true;
+      try { await PresidioManager.sweepStaleSubprocesses(); } catch { /* best effort */ }
+    }
+
     this.starting = new Promise<boolean>((resolve) => {
       let settled = false;
       const finish = (ok: boolean) => {
@@ -102,7 +115,7 @@ export class PresidioManager {
 
       const startupTimer = setTimeout(() => {
         logger.warn('REDACT', 'Presidio sidecar startup timed out; disabling for this process');
-        this.teardownChild();
+        void this.teardownChild();
         this.disabled = true;
         finish(false);
       }, cfg.startupTimeoutMs);
@@ -162,14 +175,103 @@ export class PresidioManager {
     }
   }
 
-  private teardownChild(): void {
+  private async teardownChild(): Promise<void> {
     const c = this.child;
     this.child = null;
     this.ready = false;
-    if (!c) return;
+    if (!c || typeof c.pid !== 'number') return;
+    // `uv run` spawns python as a child; SIGTERM to uv alone can orphan the
+    // grandchild. Tree-kill the whole subtree (mirrors ChromaMcpManager).
     try {
-      if (typeof c.pid === 'number') c.kill('SIGTERM');
+      await PresidioManager.killProcessTree(c.pid);
     } catch { /* best effort */ }
+  }
+
+  /** Recursively collect descendant PIDs (leaves first). POSIX best-effort. */
+  private static async collectDescendantPids(rootPid: number): Promise<number[]> {
+    const seen = new Set<number>();
+    const collected: number[] = [];
+    async function walk(pid: number): Promise<void> {
+      let stdout = '';
+      try {
+        stdout = (await execFileAsync('pgrep', ['-P', String(pid)], { timeout: 2_000 })).stdout;
+      } catch {
+        return;
+      }
+      for (const line of stdout.split('\n')) {
+        const n = Number.parseInt(line.trim(), 10);
+        if (Number.isFinite(n) && n > 0 && !seen.has(n)) {
+          seen.add(n);
+          await walk(n);
+          collected.push(n);
+        }
+      }
+    }
+    await walk(rootPid);
+    return collected;
+  }
+
+  /** Kill a process and all descendants. Windows: taskkill /T /F. POSIX: TERM then KILL. */
+  private static async killProcessTree(pid: number): Promise<void> {
+    if (process.platform === 'win32') {
+      try {
+        await execFileAsync('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 5_000, windowsHide: true });
+      } catch { /* already dead — fine */ }
+      return;
+    }
+    try {
+      const before = await PresidioManager.collectDescendantPids(pid);
+      for (const child of before) { try { process.kill(child, 'SIGTERM'); } catch { /* gone */ } }
+      try { process.kill(pid, 'SIGTERM'); } catch { /* gone */ }
+      await new Promise((r) => setTimeout(r, 500));
+      const after = await PresidioManager.collectDescendantPids(pid);
+      for (const child of new Set([...before, ...after])) { try { process.kill(child, 'SIGKILL'); } catch { /* gone */ } }
+      try { process.kill(pid, 'SIGKILL'); } catch { /* gone */ }
+    } catch { /* best effort */ }
+  }
+
+  /**
+   * Pure parse helper: from `pgrep -lf` output ("<pid> <cmd>" per line) return
+   * PIDs whose command references the sidecar script, excluding selfPid.
+   */
+  static parseStalePresidioPids(pgrepOutput: string, selfPid: number = process.pid): number[] {
+    const pids: number[] = [];
+    for (const line of pgrepOutput.split('\n')) {
+      const trimmed = line.trim();
+      const sp = trimmed.indexOf(' ');
+      if (sp === -1) continue;
+      const pid = Number.parseInt(trimmed.slice(0, sp), 10);
+      const command = trimmed.slice(sp + 1);
+      if (!Number.isFinite(pid) || pid <= 0 || pid === selfPid) continue;
+      if (command.includes(SCRIPT_NAME)) pids.push(pid);
+    }
+    return pids;
+  }
+
+  /**
+   * Reap presidio_service.py subprocess trees orphaned by a prior worker that
+   * died ungracefully. Safe at worker startup: this process has not spawned its
+   * own sidecar yet, so every presidio_service.py is stale. POSIX-only (pgrep).
+   */
+  static async sweepStaleSubprocesses(): Promise<void> {
+    if (process.platform === 'win32') return;
+    let stdout = '';
+    try {
+      stdout = (await execFileAsync('pgrep', ['-lf', SCRIPT_NAME], { timeout: 2_000 })).stdout;
+    } catch (error) {
+      const code = (error as { code?: string | number }).code;
+      if (code === 1) return; // matched nothing — benign
+      logger.warn('REDACT', 'Stale Presidio sweep skipped: pgrep failed — prior orphans may persist', {
+        code: typeof code === 'string' || typeof code === 'number' ? code : undefined,
+      });
+      return;
+    }
+    const stale = PresidioManager.parseStalePresidioPids(stdout);
+    if (stale.length === 0) return;
+    logger.info('REDACT', 'Reaping orphaned Presidio subprocess tree(s) from a prior worker', { pids: stale });
+    for (const pid of stale) {
+      try { await PresidioManager.killProcessTree(pid); } catch { /* best effort */ }
+    }
   }
 
   async anonymize(text: string, ctx: { project?: string } = {}): Promise<AnonymizeResult> {
@@ -204,7 +306,7 @@ export class PresidioManager {
   }
 
   async stop(): Promise<void> {
-    this.teardownChild();
+    await this.teardownChild();
     for (const [, p] of this.pending) {
       clearTimeout(p.timer);
       p.resolve({ text: p.fallback, counts: {} });

@@ -6,7 +6,7 @@ import { PresidioManager } from '../../src/services/redaction/PresidioManager';
 type Responder = ((req: any, child: FakeChild) => void) | null;
 
 class FakeChild extends EventEmitter {
-  pid = 4242;
+  pid = 999999999; // non-existent PID: tree-kill's process.kill hits ESRCH safely
   killed = false;
   stdout = new EventEmitter();
   stderr = new EventEmitter();
@@ -83,6 +83,16 @@ describe('PresidioManager', () => {
     installFakeSpawn(null); // never responds
     const res = await PresidioManager.getInstance().anonymize('hello Jane', {});
     expect(res).toEqual({ text: 'hello Jane', counts: {} });
+  });
+
+  it('parseStalePresidioPids matches the script, excludes self and non-matches', () => {
+    const out = [
+      '111 uv run /x/plugin/scripts/presidio_service.py',
+      '222 python /other/thing.py',
+      `${process.pid} uv run /x/plugin/scripts/presidio_service.py`, // self — excluded
+      '333 uv run /y/plugin/scripts/presidio_service.py',
+    ].join('\n');
+    expect(PresidioManager.parseStalePresidioPids(out)).toEqual([111, 333]);
   });
 
   it('restarts once after a crash, then disables after a second crash', async () => {
