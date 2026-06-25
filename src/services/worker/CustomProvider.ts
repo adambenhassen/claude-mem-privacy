@@ -10,7 +10,7 @@ import { OpenRouterProvider, type OpenRouterConfig } from './OpenRouterProvider.
  * A first-class `CLAUDE_MEM_PROVIDER=custom` that points at any
  * OpenAI-compatible `/chat/completions` endpoint via its own settings:
  *
- *   CLAUDE_MEM_CUSTOM_BASE_URL = http://100.104.227.128:8643/v1
+ *   CLAUDE_MEM_CUSTOM_BASE_URL = http://localhost:8000/v1
  *   CLAUDE_MEM_CUSTOM_MODEL    = openai/fcm
  *   CLAUDE_MEM_CUSTOM_API_KEY  = <optional>
  *
@@ -50,10 +50,13 @@ function getCustomConfig(): OpenRouterConfig {
   // appended; a full chat-completions URL is used verbatim.
   const apiUrl = resolveOpenRouterChatCompletionsUrl(settings.CLAUDE_MEM_CUSTOM_BASE_URL || '');
 
+  logger.debug('SDK', 'Custom provider config resolved', { apiUrl, model: model || '(unset)' });
+
   // Empty model would be sent as `model: ""`, which most endpoints reject with
-  // an opaque 400 — surface the misconfiguration explicitly instead.
+  // an opaque 400. Fail fast at the boundary with an actionable message rather
+  // than deferring to a confusing downstream error.
   if (!model) {
-    logger.warn('SDK', 'Custom provider has no model configured; set CLAUDE_MEM_CUSTOM_MODEL', { apiUrl });
+    throw new Error('Custom provider has no model configured. Set CLAUDE_MEM_CUSTOM_MODEL in settings.');
   }
 
   return { apiKey, model, apiUrl };

@@ -112,7 +112,7 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_OPENROUTER_MAX_TOKENS: '100000',  // Max estimated tokens (~100k safety limit)
     CLAUDE_MEM_CUSTOM_API_KEY: '',  // Optional — custom OpenAI-compatible endpoints may be keyless
     CLAUDE_MEM_CUSTOM_MODEL: '',  // Model id passed verbatim (e.g. openai/fcm)
-    CLAUDE_MEM_CUSTOM_BASE_URL: '',  // OpenAI-compatible base URL, e.g. http://100.104.227.128:8643/v1
+    CLAUDE_MEM_CUSTOM_BASE_URL: '',  // OpenAI-compatible base URL, e.g. http://localhost:8000/v1
     CLAUDE_MEM_DATA_DIR: join(homedir(), '.claude-mem'),
     CLAUDE_MEM_LOG_LEVEL: 'INFO',
     CLAUDE_MEM_PYTHON_VERSION: '3.13',

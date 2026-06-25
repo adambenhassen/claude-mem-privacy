@@ -33,11 +33,18 @@ export function classifyOpenRouterError(input: {
   headers?: Headers | { get(name: string): string | null };
   cause: unknown;
   requestId?: string;
+  /**
+   * Provider name for the error message. Defaults to 'OpenRouter'; subclasses
+   * targeting a different endpoint (CustomProvider) pass their own label so a
+   * failure isn't misattributed to a service the user never configured.
+   */
+  label?: string;
 }): ClassifiedProviderError {
   const status = input.status;
   const body = input.bodyText ?? '';
   const lower = body.toLowerCase();
   const headers = input.headers;
+  const label = input.label ?? 'OpenRouter';
   const retryAfterMs = headers ? parseRetryAfterMs(headers.get('retry-after')) : undefined;
 
   // Quota / insufficient credits — body marker takes precedence over status.
@@ -47,35 +54,35 @@ export function classifyOpenRouterError(input: {
     lower.includes('insufficient_quota')
   ) {
     return new ClassifiedProviderError(
-      `OpenRouter quota exhausted${status !== undefined ? ` (status ${status})` : ''}`,
+      `${label} quota exhausted${status !== undefined ? ` (status ${status})` : ''}`,
       { kind: 'quota_exhausted', cause: input.cause },
     );
   }
 
   if (status === 429) {
     return new ClassifiedProviderError(
-      'OpenRouter rate limit (429)',
+      `${label} rate limit (429)`,
       { kind: 'rate_limit', cause: input.cause, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) },
     );
   }
 
   if (status === 401 || status === 403) {
     return new ClassifiedProviderError(
-      `OpenRouter auth error (status ${status})`,
+      `${label} auth error (status ${status})`,
       { kind: 'auth_invalid', cause: input.cause },
     );
   }
 
   if (status === 400 || status === 404) {
     return new ClassifiedProviderError(
-      `OpenRouter bad request (status ${status})`,
+      `${label} bad request (status ${status})`,
       { kind: 'unrecoverable', cause: input.cause },
     );
   }
 
   if (status !== undefined && status >= 500 && status < 600) {
     return new ClassifiedProviderError(
-      `OpenRouter upstream error (status ${status})`,
+      `${label} upstream error (status ${status})`,
       { kind: 'transient', cause: input.cause },
     );
   }
@@ -83,13 +90,13 @@ export function classifyOpenRouterError(input: {
   // Network errors (no status) — treat as transient.
   if (status === undefined) {
     return new ClassifiedProviderError(
-      `OpenRouter network error: ${input.cause instanceof Error ? input.cause.message : String(input.cause)}`,
+      `${label} network error: ${input.cause instanceof Error ? input.cause.message : String(input.cause)}`,
       { kind: 'transient', cause: input.cause },
     );
   }
 
   return new ClassifiedProviderError(
-    `OpenRouter API error: ${status}${body ? ` - ${body.substring(0, 200)}` : ''}`,
+    `${label} API error: ${status}${body ? ` - ${body.substring(0, 200)}` : ''}`,
     { kind: 'unrecoverable', cause: input.cause },
   );
 }
@@ -210,12 +217,13 @@ export class OpenRouterProvider extends OpenAICompatibleProvider<OpenRouterConfi
     siteUrl?: string,
     appName?: string
   ): Promise<ProviderQueryResult> {
+    const label = this.providerName;
     const truncatedHistory = this.truncateHistoryForOpenRouter(history);
     const messages = this.conversationToOpenAIMessages(truncatedHistory);
     const totalChars = truncatedHistory.reduce((sum, m) => sum + m.content.length, 0);
     const estimatedTokens = this.estimateTokens(truncatedHistory.map(m => m.content).join(''));
 
-    logger.debug('SDK', `Querying OpenRouter multi-turn (${model})`, {
+    logger.debug('SDK', `Querying ${label} multi-turn (${model})`, {
       turns: truncatedHistory.length,
       totalChars,
       estimatedTokens
@@ -248,7 +256,7 @@ export class OpenRouterProvider extends OpenAICompatibleProvider<OpenRouterConfi
           signal: attemptSignal,
         });
       } catch (networkError: unknown) {
-        throw classifyOpenRouterError({ cause: networkError });
+        throw classifyOpenRouterError({ cause: networkError, label });
       }
 
       const requestId = response.headers.get('x-request-id') ?? response.headers.get('x-openrouter-request-id');
@@ -264,7 +272,8 @@ export class OpenRouterProvider extends OpenAICompatibleProvider<OpenRouterConfi
           status: response.status,
           bodyText: errorText,
           headers: response.headers,
-          cause: new Error(`OpenRouter API error: ${response.status} - ${errorText}`),
+          cause: new Error(`${label} API error: ${response.status} - ${errorText}`),
+          label,
           ...(requestId ? { requestId } : {}),
         });
       }
@@ -277,15 +286,16 @@ export class OpenRouterProvider extends OpenAICompatibleProvider<OpenRouterConfi
           status: response.status,
           bodyText: `${responseData.error.code} ${responseData.error.message ?? ''}`,
           headers: response.headers,
-          cause: new Error(`OpenRouter API error: ${responseData.error.code} - ${responseData.error.message}`),
+          cause: new Error(`${label} API error: ${responseData.error.code} - ${responseData.error.message}`),
+          label,
         });
       }
 
       return responseData;
-    }, { label: `OpenRouter ${model}` });
+    }, { label: `${label} ${model}` });
 
     if (!data.choices?.[0]?.message?.content) {
-      logger.error('SDK', 'Empty response from OpenRouter');
+      logger.error('SDK', `Empty response from ${label}`);
       return { content: '' };
     }
 

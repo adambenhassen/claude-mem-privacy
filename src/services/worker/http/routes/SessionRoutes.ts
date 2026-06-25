@@ -91,7 +91,13 @@ export class SessionRoutes extends BaseRouteHandler {
   }
 
   private getSelectedProvider(): 'claude' | 'gemini' | 'openrouter' | 'custom' {
-    if (isCustomSelected() && isCustomAvailable()) {
+    if (isCustomSelected()) {
+      if (!isCustomAvailable()) {
+        // Custom is an explicit opt-in with no natural fallback: degrading to
+        // Claude here would silently bill the user's Claude account for a
+        // provider they never intended. Fail loudly instead.
+        throw new Error('Custom provider selected but no base URL configured. Set CLAUDE_MEM_CUSTOM_BASE_URL in settings.');
+      }
       return 'custom';
     }
     if (isOpenRouterSelected() && isOpenRouterAvailable()) {

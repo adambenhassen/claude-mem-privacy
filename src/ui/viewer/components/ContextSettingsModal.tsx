@@ -451,13 +451,13 @@ export function ContextSettingsModal({
                 <>
                   <FormField
                     label="Base URL"
-                    tooltip="OpenAI-compatible base URL. '/chat/completions' is appended automatically (e.g. http://100.104.227.128:8643/v1)."
+                    tooltip="OpenAI-compatible base URL. '/chat/completions' is appended automatically (e.g. http://localhost:8000/v1)."
                   >
                     <input
                       type="text"
                       value={formState.CLAUDE_MEM_CUSTOM_BASE_URL || ''}
                       onChange={(e) => updateSetting('CLAUDE_MEM_CUSTOM_BASE_URL', e.target.value)}
-                      placeholder="http://100.104.227.128:8643/v1"
+                      placeholder="http://localhost:8000/v1"
                     />
                   </FormField>
                   <FormField
