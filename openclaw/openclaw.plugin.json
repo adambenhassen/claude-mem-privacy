@@ -7,7 +7,7 @@
   "license": "Apache-2.0",
   "author": "thedotmack",
   "homepage": "https://claude-mem.ai",
-  "skills": ["skills/make-plan", "skills/do"],
+  "skills": [],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
