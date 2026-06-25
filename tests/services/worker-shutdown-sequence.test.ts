@@ -18,6 +18,7 @@ interface Harness {
   counters: {
     beforeGraceful: number;
     graceful: number;
+    childTeardown: number;
     waitForPortFree: number;
     removePidFile: number;
     spawnDaemon: number;
@@ -30,6 +31,7 @@ function makeHarness(overrides: {
   gracefulDeadlineMs?: number;
   beforeGracefulThrows?: boolean;
   graceful?: () => Promise<void>;
+  childTeardownThrows?: boolean;
   portFree?: boolean;
   spawnResult?: number | undefined;
   spawnThrows?: boolean;
@@ -39,6 +41,7 @@ function makeHarness(overrides: {
   const counters = {
     beforeGraceful: 0,
     graceful: 0,
+    childTeardown: 0,
     waitForPortFree: 0,
     removePidFile: 0,
     spawnDaemon: 0,
@@ -60,6 +63,13 @@ function makeHarness(overrides: {
       counters.graceful++;
       calls.push('graceful');
       return overrides.graceful ? overrides.graceful() : Promise.resolve();
+    },
+    ensureChildProcessesTorndown: async () => {
+      counters.childTeardown++;
+      calls.push('childTeardown');
+      if (overrides.childTeardownThrows) {
+        throw new Error('chroma stop failed');
+      }
     },
     gracefulDeadlineMs: overrides.gracefulDeadlineMs ?? 1000,
     restartHandoff: {
@@ -161,6 +171,77 @@ describe('runShutdownSequence — graceful-shutdown deadline', () => {
     await runShutdownSequence(h.options); // must not throw
 
     expect(h.counters.spawnDaemon).toBe(1);
+  });
+});
+
+describe('runShutdownSequence — forced child-process teardown', () => {
+  // performGracefulShutdown calls chromaMcpManager.stop() AFTER the session
+  // drain, which can exceed the gracefulDeadlineMs budget. When the deadline
+  // fires mid-drain the chroma-mcp tree is never killed and the successor spawns
+  // a fresh one — accumulating orphans. The forced teardown on any non-clean
+  // outcome closes that gap.
+
+  it('forces child-process teardown when the graceful deadline fires, before the successor spawn', async () => {
+    const h = makeHarness({
+      reason: 'restart',
+      gracefulDeadlineMs: 50,
+      graceful: () => new Promise<void>(() => { /* hangs — unbounded session drain */ }),
+    });
+
+    await runShutdownSequence(h.options);
+
+    expect(h.counters.childTeardown).toBe(1);
+    const order = h.calls;
+    expect(order.indexOf('childTeardown')).toBeGreaterThan(order.indexOf('graceful'));
+    expect(order.indexOf('spawnDaemon')).toBeGreaterThan(order.indexOf('childTeardown'));
+  });
+
+  it('forces child-process teardown when performGracefulShutdown rejects', async () => {
+    const h = makeHarness({
+      reason: 'restart',
+      graceful: () => Promise.reject(new Error('session drain failed')),
+    });
+
+    await runShutdownSequence(h.options);
+
+    expect(h.counters.childTeardown).toBe(1);
+  });
+
+  it('does NOT run a redundant teardown when graceful shutdown completes cleanly', async () => {
+    const h = makeHarness({ reason: 'restart' });
+
+    await runShutdownSequence(h.options);
+
+    // The clean path already ran chromaMcpManager.stop() inside
+    // performGracefulShutdown, so no forced teardown is needed.
+    expect(h.counters.childTeardown).toBe(0);
+  });
+
+  it('still hands off to the successor when the forced teardown throws', async () => {
+    const h = makeHarness({
+      reason: 'restart',
+      gracefulDeadlineMs: 50,
+      graceful: () => new Promise<void>(() => {}),
+      childTeardownThrows: true,
+    });
+
+    await runShutdownSequence(h.options); // must not throw
+
+    expect(h.counters.childTeardown).toBe(1);
+    expect(h.counters.spawnDaemon).toBe(1);
+  });
+
+  it("forces teardown on a 'stop' that exceeds the deadline (no successor to leak into)", async () => {
+    const h = makeHarness({
+      reason: 'stop',
+      gracefulDeadlineMs: 50,
+      graceful: () => new Promise<void>(() => {}),
+    });
+
+    await runShutdownSequence(h.options);
+
+    expect(h.counters.childTeardown).toBe(1);
+    expect(h.counters.spawnDaemon).toBe(0);
   });
 });
 

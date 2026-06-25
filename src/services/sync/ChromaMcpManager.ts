@@ -542,6 +542,122 @@ export class ChromaMcpManager {
   }
 
   /**
+   * Reap chroma-mcp subprocess trees orphaned by a PRIOR worker that died
+   * without completing graceful shutdown (deadline-exceeded restart, crash, or
+   * SIGKILL). disposeCurrentSubprocess() only tree-kills the subprocess THIS
+   * manager instance spawned (tracked via `this.transport._process`); a freshly
+   * booted worker has a null transport and therefore no handle to a previous
+   * worker's orphan, so without this sweep those trees accumulate — notably on
+   * Linux, where the uv/python/chroma-mcp grandchildren reparent to init and
+   * persist (macOS tends to self-heal on stdin EOF).
+   *
+   * Safe to run at worker startup: the worker is a per-machine singleton and has
+   * not yet spawned its own chroma-mcp, so every process bound to our data-dir is
+   * stale. MUST complete before the worker spawns its own chroma-mcp, or it could
+   * kill the fresh subprocess it just started.
+   *
+   * Matches only processes whose command line references `dataDir`, so a
+   * chroma-mcp from a different claude-mem install / data-dir is never touched.
+   * POSIX-only (pgrep); a no-op on win32 and when pgrep is unavailable.
+   */
+  static async sweepStaleSubprocesses(dataDir: string = DEFAULT_CHROMA_DATA_DIR): Promise<void> {
+    if (process.platform === 'win32') {
+      return; // pgrep unavailable; relies on the in-instance taskkill /T paths.
+    }
+
+    const normalizedDir = dataDir.replace(/\\/g, '/');
+    const stalePids = await ChromaMcpManager.findStaleChromaPids(normalizedDir);
+    if (stalePids.length === 0) {
+      return;
+    }
+
+    logger.info('CHROMA_MCP', 'Reaping orphaned chroma-mcp subprocess tree(s) from a prior worker', {
+      pids: stalePids,
+      dataDir: normalizedDir
+    });
+    for (const pid of stalePids) {
+      try {
+        await ChromaMcpManager.killProcessTree(pid);
+      } catch (error) {
+        logger.warn('CHROMA_MCP', 'failed to reap orphaned chroma-mcp tree (best-effort)', {
+          pid,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    }
+  }
+
+  /**
+   * List PIDs of chroma-mcp processes whose command line references `dataDir`.
+   * Uses a single `pgrep -lf chroma-mcp` (pid + full command per line) and then
+   * confirms the data-dir in-process so unrelated chroma-mcp instances are left
+   * alone. Excludes the current worker PID.
+   *
+   * Only `pgrep` exit code 1 (matched nothing) is treated as "no orphans" and
+   * returns [] silently. ENOENT (pgrep missing — e.g. a minimal Linux
+   * container), the 2s timeout, or exit 2/3 (usage/fatal) mean the sweep did
+   * NOT actually run, so a prior worker's orphan trees may persist — those are
+   * logged at warn rather than swallowed, otherwise this masks the very leak
+   * the sweep exists to prevent.
+   */
+  private static async findStaleChromaPids(dataDir: string): Promise<number[]> {
+    let stdout = '';
+    try {
+      const result = await execFileAsync('pgrep', ['-lf', 'chroma-mcp'], { timeout: 2_000 });
+      stdout = result.stdout;
+    } catch (error) {
+      const code = (error as { code?: string | number }).code;
+      if (code === 1) {
+        return []; // pgrep matched nothing — the one benign case.
+      }
+      logger.warn('CHROMA_MCP', 'Stale chroma-mcp sweep skipped: pgrep failed — prior orphan trees may persist', {
+        code: typeof code === 'string' || typeof code === 'number' ? code : undefined,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return [];
+    }
+    return ChromaMcpManager.parseStaleChromaPids(stdout, dataDir);
+  }
+
+  /**
+   * Pure parse helper for findStaleChromaPids: given `pgrep -lf` output
+   * ("<pid> <full command>" per line), return the PIDs whose command line
+   * references `dataDir`, excluding `selfPid`. The data-dir scoping is what
+   * keeps the sweep from killing a chroma-mcp belonging to a different
+   * claude-mem install. Extracted so the matching logic is unit-testable
+   * without shelling out to pgrep.
+   *
+   * Matches the `--data-dir <dataDir>` flag token (buildCommandArgs always
+   * passes the value as the argv immediately after `--data-dir`, so it renders
+   * with a single space) rather than a raw substring — a bare `includes(dataDir)`
+   * would also match a sibling install whose dir merely has ours as a prefix
+   * (e.g. `<dataDir>-test`).
+   */
+  static parseStaleChromaPids(pgrepOutput: string, dataDir: string, selfPid: number = process.pid): number[] {
+    const dataDirFlag = `--data-dir ${dataDir}`;
+    const pids: number[] = [];
+    for (const line of pgrepOutput.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+      const spaceIndex = trimmed.indexOf(' ');
+      if (spaceIndex === -1) {
+        continue;
+      }
+      const pid = Number.parseInt(trimmed.slice(0, spaceIndex), 10);
+      const command = trimmed.slice(spaceIndex + 1);
+      if (!Number.isFinite(pid) || pid <= 0 || pid === selfPid) {
+        continue;
+      }
+      if (command.includes(dataDirFlag)) {
+        pids.push(pid);
+      }
+    }
+    return pids;
+  }
+
+  /**
    * Recursively collect all descendant PIDs of `rootPid` using `pgrep -P`.
    * Returned bottom-up (leaves first) so callers can signal leaves before
    * their ancestors. Best-effort: missing pgrep / non-zero exits return [].

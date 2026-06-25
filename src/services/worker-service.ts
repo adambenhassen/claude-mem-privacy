@@ -463,6 +463,18 @@ export class WorkerService implements WorkerRef {
 
       const chromaEnabled = settings.CLAUDE_MEM_CHROMA_ENABLED !== 'false';
       if (chromaEnabled) {
+        // Reap chroma-mcp trees orphaned by a prior worker that died without
+        // completing graceful shutdown (deadline-exceeded restart, crash,
+        // SIGKILL). Must finish BEFORE we spawn our own chroma-mcp so the sweep
+        // can't kill the fresh subprocess. Best-effort: a reap failure must
+        // never abort the rest of init (db, search, telemetry), so it's guarded
+        // here rather than left to the generic background-init catch.
+        try {
+          await ChromaMcpManager.sweepStaleSubprocesses();
+        } catch (error) {
+          logger.error('CHROMA_MCP', 'Startup orphan sweep failed (non-blocking) — continuing init', {},
+            error instanceof Error ? error : new Error(String(error)));
+        }
         this.chromaMcpManager = ChromaMcpManager.getInstance();
         logger.info('SYSTEM', 'ChromaMcpManager initialized (lazy - connects on first use)');
       } else {
@@ -724,6 +736,13 @@ export class WorkerService implements WorkerRef {
         dbManager: this.dbManager,
         chromaMcpManager: this.chromaMcpManager || undefined
       }),
+      // Forced on a non-clean graceful outcome: kill the chroma-mcp tree so a
+      // deadline-exceeded restart never orphans it for the successor to leak.
+      ensureChildProcessesTorndown: async () => {
+        if (this.chromaMcpManager) {
+          await this.chromaMcpManager.stop();
+        }
+      },
       gracefulDeadlineMs: getPlatformTimeout(10000),
       restartHandoff: {
         port: getWorkerPort(),

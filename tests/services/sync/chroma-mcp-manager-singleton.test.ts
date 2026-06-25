@@ -246,6 +246,53 @@ describe('ChromaMcpManager singleton enforcement (#2313)', () => {
   });
 });
 
+// Startup orphan-sweep coverage. A worker that died without completing graceful
+// shutdown (deadline-exceeded restart, crash, SIGKILL) leaves its chroma-mcp
+// subprocess tree orphaned; the in-instance singleton logic only tracks
+// subprocesses THIS manager spawned, so a fresh worker needs an explicit boot
+// sweep keyed on the chroma data-dir to reap them. The pid/data-dir matching is
+// the load-bearing logic and is unit-tested here as a pure function (the
+// execFileAsync/pgrep binding is fixed at module load and can't be mocked from
+// this file).
+describe('ChromaMcpManager.parseStaleChromaPids (startup orphan reap matching)', () => {
+  const DATA_DIR = '/Users/me/.claude-mem/chroma';
+  const SELF = 4242;
+
+  it('selects chroma-mcp PIDs whose command references our data-dir', () => {
+    const output =
+      `100001 /opt/homebrew/bin/uv tool uvx chroma-mcp==0.2.6 --client-type persistent --data-dir ${DATA_DIR}\n` +
+      `100002 /usr/bin/python .../chroma-mcp --client-type persistent --data-dir ${DATA_DIR}\n`;
+
+    expect(ChromaMcpManager.parseStaleChromaPids(output, DATA_DIR, SELF)).toEqual([100001, 100002]);
+  });
+
+  it('ignores chroma-mcp bound to a DIFFERENT data-dir', () => {
+    const output = `100003 uvx chroma-mcp --client-type persistent --data-dir /other/install/chroma\n`;
+
+    expect(ChromaMcpManager.parseStaleChromaPids(output, DATA_DIR, SELF)).toEqual([]);
+  });
+
+  it('never selects the current worker PID', () => {
+    const output = `${SELF} bun worker-service.cjs --data-dir ${DATA_DIR} (chroma-mcp sweep)\n`;
+
+    expect(ChromaMcpManager.parseStaleChromaPids(output, DATA_DIR, SELF)).toEqual([]);
+  });
+
+  it('tolerates blank and malformed lines', () => {
+    const output =
+      `\n` +
+      `not-a-pid line with ${DATA_DIR}\n` +
+      `   \n` +
+      `100004 uvx chroma-mcp --data-dir ${DATA_DIR}\n`;
+
+    expect(ChromaMcpManager.parseStaleChromaPids(output, DATA_DIR, SELF)).toEqual([100004]);
+  });
+
+  it('returns nothing for empty pgrep output (no matches)', () => {
+    expect(ChromaMcpManager.parseStaleChromaPids('', DATA_DIR, SELF)).toEqual([]);
+  });
+});
+
 // Restore the real process.kill once the test module finishes evaluating any
 // late-arriving microtasks.
 process.on('exit', () => {

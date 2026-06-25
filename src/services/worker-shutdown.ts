@@ -57,6 +57,19 @@ export interface ShutdownSequenceOptions {
   /** Pre-graceful bookkeeping: transcript watcher, heartbeat, sentinel, telemetry flush. */
   beforeGracefulShutdown: () => Promise<void>;
   performGracefulShutdown: () => Promise<void>;
+  /**
+   * Teardown of OS-managed child processes (the chroma-mcp subprocess tree).
+   * The sequence awaits this without an added deadline — the injected
+   * implementation is responsible for bounding itself (chromaMcpManager.stop()'s
+   * tree-kill has no session drain, only fixed-timeout exec calls).
+   * performGracefulShutdown sequences chromaMcpManager.stop() AFTER the
+   * session drain, so when the gracefulDeadlineMs deadline fires mid-drain (or
+   * the sequence rejects), chroma is never killed and the successor worker
+   * spawns a fresh one — accumulating orphans. This runs on any non-clean
+   * outcome to guarantee the chroma tree dies before the successor handoff.
+   * Idempotent with the chroma stop already inside performGracefulShutdown.
+   */
+  ensureChildProcessesTorndown: () => Promise<void>;
   gracefulDeadlineMs: number;
   restartHandoff: RestartHandoffDeps;
 }
@@ -93,8 +106,9 @@ export async function runShutdownSequence(options: ShutdownSequenceOptions): Pro
     deadlineTimer = setTimeout(() => resolve('deadline'), options.gracefulDeadlineMs);
     deadlineTimer.unref?.();
   });
+  let outcome: 'graceful' | 'graceful-error' | 'deadline';
   try {
-    const outcome = await Promise.race([
+    outcome = await Promise.race([
       options.performGracefulShutdown().then(
         () => 'graceful' as const,
         (error: unknown) => {
@@ -119,6 +133,26 @@ export async function runShutdownSequence(options: ShutdownSequenceOptions): Pro
     }
   } finally {
     if (deadlineTimer !== undefined) clearTimeout(deadlineTimer);
+  }
+
+  // When the graceful sequence did NOT complete cleanly, it was abandoned (or
+  // failed) before performGracefulShutdown reached chromaMcpManager.stop(),
+  // which would orphan the chroma-mcp subprocess tree for the successor to
+  // leak. Force a teardown now, before the handoff. Best-effort and idempotent
+  // with the clean path's own chroma stop; a failure here must never abort the
+  // restart handoff. (chromaMcpManager.stop() does its own bounded tree-kill —
+  // no session drain — so it needs no extra deadline.)
+  if (outcome !== 'graceful') {
+    try {
+      await options.ensureChildProcessesTorndown();
+    } catch (error: unknown) {
+      logger.error(
+        'SYSTEM',
+        'Forced child-process teardown failed — proceeding',
+        { reason: options.reason },
+        error instanceof Error ? error : new Error(String(error))
+      );
+    }
   }
 
   // Successor handoff — ONLY for restart; 'stop' and signal shutdowns stay
