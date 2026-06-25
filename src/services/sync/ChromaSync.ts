@@ -5,6 +5,7 @@ import { ParsedObservation, ParsedSummary } from '../../sdk/parser.js';
 import { SessionStore } from '../sqlite/SessionStore.js';
 import { logger } from '../../utils/logger.js';
 import { parseFileList } from '../sqlite/observations/files.js';
+import { redactText } from '../../shared/redaction/index.js';
 
 interface ChromaDocument {
   id: string;
@@ -230,6 +231,25 @@ export class ChromaSync {
     if (documents.length === 0) {
       return 0;
     }
+
+    // Last-line-of-defense redaction before anything reaches the vector index.
+    // Idempotent: content stored via redacted SQLite rows is already clean.
+    const project = typeof documents[0]?.metadata?.project === 'string'
+      ? (documents[0].metadata.project as string)
+      : undefined;
+    documents = documents.map(d => ({
+      ...d,
+      document: redactText(d.document, { surface: 'chroma', project }),
+      metadata: {
+        ...d.metadata,
+        ...(typeof d.metadata.title === 'string'
+          ? { title: redactText(d.metadata.title, { surface: 'chroma', project }) }
+          : {}),
+        ...(typeof d.metadata.subtitle === 'string'
+          ? { subtitle: redactText(d.metadata.subtitle, { surface: 'chroma', project }) }
+          : {}),
+      },
+    }));
 
     await this.ensureCollectionExists();
 

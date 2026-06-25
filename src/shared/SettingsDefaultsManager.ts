@@ -86,6 +86,11 @@ export interface SettingsDefaults {
   CLAUDE_MEM_SERVER_BETA_URL: string;
   CLAUDE_MEM_SERVER_BETA_API_KEY: string;
   CLAUDE_MEM_SERVER_BETA_PROJECT_ID: string;
+  CLAUDE_MEM_REDACTION_ENABLED: string;
+  CLAUDE_MEM_REDACTION_DISABLED_CATEGORIES: string;
+  CLAUDE_MEM_REDACTION_EMAIL_ALLOWLIST: string;
+  CLAUDE_MEM_REDACTION_LOCALE_PATTERNS: string;
+  CLAUDE_MEM_REDACTION_PROJECT_OVERRIDES: string;
 }
 
 export class SettingsDefaultsManager {
@@ -171,6 +176,11 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_SERVER_BETA_URL: `http://127.0.0.1:${process.env.CLAUDE_MEM_SERVER_PORT ?? String(37877 + ((process.getuid?.() ?? 77) % 100))}`,  // Default server-beta runtime URL — UID-derived for multi-account isolation
     CLAUDE_MEM_SERVER_BETA_API_KEY: '',                     // Local hook API key, populated by installer when runtime=server-beta
     CLAUDE_MEM_SERVER_BETA_PROJECT_ID: '',                  // Default Postgres project_id used by hooks when runtime=server-beta
+    CLAUDE_MEM_REDACTION_ENABLED: 'true',                   // Global kill-switch for the PII/secret redactor; 'false' disables all redaction
+    CLAUDE_MEM_REDACTION_DISABLED_CATEGORIES: '',           // Comma-separated category names to turn off (e.g. PHONE,POSTAL)
+    CLAUDE_MEM_REDACTION_EMAIL_ALLOWLIST: '',               // Comma-separated allowed email addresses/domains (merged with built-in noreply@ + example.*)
+    CLAUDE_MEM_REDACTION_LOCALE_PATTERNS: '{}',             // JSON map { LABEL: regexSource } of extra national-ID patterns
+    CLAUDE_MEM_REDACTION_PROJECT_OVERRIDES: '{}',           // JSON map { project: { enabled?, disabledCategories?, emailAllowlist? } }
   };
 
   static getAllDefaults(): SettingsDefaults {

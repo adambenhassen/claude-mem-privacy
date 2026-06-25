@@ -17,6 +17,7 @@ import { parseFileList } from './observations/files.js';
 import { DEFAULT_PLATFORM_SOURCE, normalizePlatformSource, sortPlatformSources } from '../../shared/platform-source.js';
 import { findRecentDuplicateUserPrompt as findRecentDuplicateUserPromptRecord } from './prompts/get.js';
 import { normalizeStoredPromptText } from './prompt-storage.js';
+import { redactText, redactFields } from '../../shared/redaction/index.js';
 
 function resolveCreateSessionArgs(
   customTitle?: string,
@@ -1754,7 +1755,7 @@ export class SessionStore {
   saveUserPrompt(contentSessionId: string, promptNumber: number, promptText: string): number {
     const now = new Date();
     const nowEpoch = now.getTime();
-    const storedPromptText = normalizeStoredPromptText(promptText);
+    const storedPromptText = redactText(normalizeStoredPromptText(promptText), { surface: 'sqlite' });
 
     const stmt = this.db.prepare(`
       INSERT INTO user_prompts
@@ -1802,7 +1803,9 @@ export class SessionStore {
     const timestampEpoch = overrideTimestampEpoch ?? Date.now();
     const timestampIso = new Date(timestampEpoch).toISOString();
 
-    const contentHash = computeObservationContentHash(memorySessionId, observation.title, observation.narrative);
+    const safe = redactFields(observation, ['title', 'subtitle', 'narrative', 'facts', 'concepts'], { project, surface: 'sqlite' });
+
+    const contentHash = computeObservationContentHash(memorySessionId, safe.title, safe.narrative);
 
     const stmt = this.db.prepare(`
       INSERT INTO observations
@@ -1817,14 +1820,14 @@ export class SessionStore {
     const inserted = stmt.get(
       memorySessionId,
       project,
-      observation.type,
-      observation.title,
-      observation.subtitle,
-      JSON.stringify(observation.facts),
-      observation.narrative,
-      JSON.stringify(observation.concepts),
-      JSON.stringify(observation.files_read),
-      JSON.stringify(observation.files_modified),
+      safe.type,
+      safe.title,
+      safe.subtitle,
+      JSON.stringify(safe.facts),
+      safe.narrative,
+      JSON.stringify(safe.concepts),
+      JSON.stringify(safe.files_read),
+      JSON.stringify(safe.files_modified),
       promptNumber || null,
       discoveryTokens,
       observation.agent_type ?? null,
@@ -1870,6 +1873,8 @@ export class SessionStore {
     const timestampEpoch = overrideTimestampEpoch ?? Date.now();
     const timestampIso = new Date(timestampEpoch).toISOString();
 
+    const safe = redactFields(summary, ['request', 'investigated', 'learned', 'completed', 'next_steps', 'notes'], { project, surface: 'sqlite' });
+
     const stmt = this.db.prepare(`
       INSERT INTO session_summaries
       (memory_session_id, project, request, investigated, learned, completed,
@@ -1880,12 +1885,12 @@ export class SessionStore {
     const result = stmt.run(
       memorySessionId,
       project,
-      summary.request,
-      summary.investigated,
-      summary.learned,
-      summary.completed,
-      summary.next_steps,
-      summary.notes,
+      safe.request,
+      safe.investigated,
+      safe.learned,
+      safe.completed,
+      safe.next_steps,
+      safe.notes,
       promptNumber || null,
       discoveryTokens,
       timestampIso,
@@ -1946,22 +1951,23 @@ export class SessionStore {
       );
 
       for (const observation of observations) {
-        const contentHash = computeObservationContentHash(memorySessionId, observation.title, observation.narrative);
+        const safe = redactFields(observation, ['title', 'subtitle', 'narrative', 'facts', 'concepts'], { project, surface: 'sqlite' });
+        const contentHash = computeObservationContentHash(memorySessionId, safe.title, safe.narrative);
         const inserted = obsStmt.get(
           memorySessionId,
           project,
-          observation.type,
-          observation.title,
-          observation.subtitle,
-          JSON.stringify(observation.facts),
-          observation.narrative,
-          JSON.stringify(observation.concepts),
-          JSON.stringify(observation.files_read),
-          JSON.stringify(observation.files_modified),
+          safe.type,
+          safe.title,
+          safe.subtitle,
+          JSON.stringify(safe.facts),
+          safe.narrative,
+          JSON.stringify(safe.concepts),
+          JSON.stringify(safe.files_read),
+          JSON.stringify(safe.files_modified),
           promptNumber || null,
           discoveryTokens,
-          observation.agent_type ?? null,
-          observation.agent_id ?? null,
+          safe.agent_type ?? null,
+          safe.agent_id ?? null,
           contentHash,
           timestampIso,
           timestampEpoch,
@@ -1984,6 +1990,7 @@ export class SessionStore {
 
       let summaryId: number | null = null;
       if (summary) {
+        const safeSummary = redactFields(summary, ['request', 'investigated', 'learned', 'completed', 'next_steps', 'notes'], { project, surface: 'sqlite' });
         const summaryStmt = this.db.prepare(`
           INSERT INTO session_summaries
           (memory_session_id, project, request, investigated, learned, completed,
@@ -1994,12 +2001,12 @@ export class SessionStore {
         const result = summaryStmt.run(
           memorySessionId,
           project,
-          summary.request,
-          summary.investigated,
-          summary.learned,
-          summary.completed,
-          summary.next_steps,
-          summary.notes,
+          safeSummary.request,
+          safeSummary.investigated,
+          safeSummary.learned,
+          safeSummary.completed,
+          safeSummary.next_steps,
+          safeSummary.notes,
           promptNumber || null,
           discoveryTokens,
           timestampIso,

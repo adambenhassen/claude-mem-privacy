@@ -1,5 +1,6 @@
 
 import { logger } from '../utils/logger.js';
+import { redactForLLM } from '../shared/redaction/index.js';
 import type { ModeConfig } from '../services/domain/types.js';
 
 export const SUMMARY_MODE_MARKER = 'MODE SWITCH: PROGRESS SUMMARY';
@@ -22,7 +23,7 @@ export interface SDKSession {
 }
 
 export function buildInitPrompt(project: string, sessionId: string, userPrompt: string, mode: ModeConfig): string {
-  return `${mode.prompts.system_identity}
+  return redactForLLM(`${mode.prompts.system_identity}
 
 <observed_from_primary_session>
   <user_request>${userPrompt}</user_request>
@@ -75,7 +76,7 @@ ${mode.prompts.format_examples}
 
 ${mode.prompts.footer}
 
-${mode.prompts.header_memory_start}`;
+${mode.prompts.header_memory_start}`, { project });
 }
 
 // Per-field character budget for the <parameters> / <outcome> blocks in an
@@ -136,7 +137,7 @@ export function buildObservationPrompt(obs: Observation): string {
     toolOutput = obs.tool_output;
   }
 
-  return `<observed_from_primary_session>
+  return redactForLLM(`<observed_from_primary_session>
   <what_happened>${obs.tool_name}</what_happened>
   <occurred_at>${new Date(obs.created_at_epoch).toISOString()}</occurred_at>${obs.cwd ? `\n  <working_directory>${obs.cwd}</working_directory>` : ''}
   <parameters>${truncateObservationField(toolInput)}</parameters>
@@ -147,7 +148,7 @@ If a <parameters> or <outcome> block above contains an "<elided chars=... />" ma
 
 Return either one or more <observation>...</observation> blocks, or an empty response if this tool use should be skipped.
 Concrete debugging findings from logs, queue state, database rows, session routing, or code-path inspection count as durable discoveries and should be recorded.
-Never reply with prose such as "Skipping", "No substantive tool executions", or any explanation outside XML. Non-XML text is discarded.`;
+Never reply with prose such as "Skipping", "No substantive tool executions", or any explanation outside XML. Non-XML text is discarded.`);
 }
 
 export function buildSummaryPrompt(session: SDKSession, mode: ModeConfig): string {
@@ -158,7 +159,7 @@ export function buildSummaryPrompt(session: SDKSession, mode: ModeConfig): strin
     return '';
   })();
 
-  return `--- ${SUMMARY_MODE_MARKER} ---
+  return redactForLLM(`--- ${SUMMARY_MODE_MARKER} ---
 ⚠️ CRITICAL TAG REQUIREMENT — READ CAREFULLY:
 • You MUST wrap your ENTIRE response in <summary>...</summary> tags.
 • Do NOT use <observation> tags. <observation> output will be DISCARDED and cause a system error.
@@ -181,11 +182,11 @@ ${mode.prompts.summary_format_instruction}
 </summary>
 
 REMINDER: Your response MUST use <summary> as the root tag, NOT <observation>.
-${mode.prompts.summary_footer}`;
+${mode.prompts.summary_footer}`, { project: session.project });
 }
 
 export function buildContinuationPrompt(userPrompt: string, promptNumber: number, contentSessionId: string, mode: ModeConfig): string {
-  return `${mode.prompts.continuation_greeting}
+  return redactForLLM(`${mode.prompts.continuation_greeting}
 
 <observed_from_primary_session>
   <user_request>${userPrompt}</user_request>
@@ -242,5 +243,5 @@ ${mode.prompts.format_examples}
 
 ${mode.prompts.footer}
 
-${mode.prompts.header_memory_continued}`;
-} 
+${mode.prompts.header_memory_continued}`);
+}
