@@ -742,6 +742,9 @@ export class WorkerService implements WorkerRef {
         if (this.chromaMcpManager) {
           await this.chromaMcpManager.stop();
         }
+        // Tear down the optional Presidio sidecar (no-op if never started).
+        const { PresidioManager } = await import('./redaction/PresidioManager.js');
+        await PresidioManager.getInstance().stop();
       },
       gracefulDeadlineMs: getPlatformTimeout(10000),
       restartHandoff: {

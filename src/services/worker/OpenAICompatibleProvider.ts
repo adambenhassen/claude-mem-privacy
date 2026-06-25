@@ -4,6 +4,7 @@ import { logger } from '../../utils/logger.js';
 import { buildInitPrompt, buildObservationPrompt, buildSummaryPrompt, buildContinuationPrompt } from '../../sdk/prompts.js';
 import type { ActiveSession, ConversationMessage } from '../worker-types.js';
 import { ModeManager } from '../domain/ModeManager.js';
+import { redactForLLMDeep } from '../../shared/redaction/index.js';
 import type { ModeConfig } from '../domain/types.js';
 import {
   processAgentResponse,
@@ -86,6 +87,16 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
   /** Hook for per-session setup that runs once config is resolved (e.g. endpointClass). */
   protected prepareSessionExtras(_session: ActiveSession, _config: TConfig): void {}
 
+  /**
+   * Optional ML PII pass applied to each outgoing user prompt at the send
+   * boundary (these are OpenAI-compatible free gateways — the leak threat).
+   * The regex core already ran inside the prompt builders; this adds Presidio
+   * NER when enabled and is a no-op (returns input) otherwise.
+   */
+  protected deepRedact(content: string, project?: string): Promise<string> {
+    return redactForLLMDeep(content, { project });
+  }
+
   async startSession(session: ActiveSession, worker?: WorkerRef): Promise<void> {
     const config = this.getConfig();
     const { apiKey, model } = config;
@@ -108,7 +119,7 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
       ? buildInitPrompt(session.project, session.contentSessionId, session.userPrompt, mode)
       : buildContinuationPrompt(session.userPrompt, session.lastPromptNumber, session.contentSessionId, mode);
 
-    session.conversationHistory.push({ role: 'user', content: initPrompt });
+    session.conversationHistory.push({ role: 'user', content: await this.deepRedact(initPrompt, session.project) });
 
     try {
       session.lastPromptSentAt = Date.now();
@@ -207,7 +218,7 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
       cwd: message.cwd
     });
 
-    session.conversationHistory.push({ role: 'user', content: obsPrompt });
+    session.conversationHistory.push({ role: 'user', content: await this.deepRedact(obsPrompt, session.project) });
     session.lastPromptSentAt = Date.now();
     session.lastGeneratorSource = 'ingest';
     const obsResponse = await this.query(session.conversationHistory, config);
@@ -256,7 +267,7 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
       last_assistant_message: message.last_assistant_message || ''
     }, mode);
 
-    session.conversationHistory.push({ role: 'user', content: summaryPrompt });
+    session.conversationHistory.push({ role: 'user', content: await this.deepRedact(summaryPrompt, session.project) });
     session.lastPromptSentAt = Date.now();
     session.lastGeneratorSource = 'summarize';
     const summaryResponse = await this.query(session.conversationHistory, config);

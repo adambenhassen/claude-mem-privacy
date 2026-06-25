@@ -29,6 +29,24 @@ export function redactForLLM(text: string, ctx: { project?: string } = {}): stri
   return out;
 }
 
+/**
+ * Deep LLM-input redaction: the synchronous regex core (always) PLUS, when the
+ * optional Presidio sidecar is enabled, an ML NER pass for free-form PII
+ * (names/locations/orgs/addresses). Any sidecar failure falls back to the regex
+ * result — never throws, never blocks beyond the configured timeout.
+ */
+export async function redactForLLMDeep(text: string, ctx: { project?: string } = {}): Promise<string> {
+  const regexed = redactForLLM(text, ctx);
+  try {
+    const { PresidioManager } = await import('../../services/redaction/PresidioManager.js');
+    const { text: out, counts } = await PresidioManager.getInstance().anonymize(regexed, ctx);
+    logCounts('llm-input-ner', ctx.project, counts);
+    return out;
+  } catch {
+    return regexed;
+  }
+}
+
 export function redactText(
   text: string,
   ctx: { project?: string; surface?: string } = {}

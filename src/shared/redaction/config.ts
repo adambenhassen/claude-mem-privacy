@@ -50,6 +50,30 @@ export function isEmailAllowed(email: string, allowlist: string[]): boolean {
   return false;
 }
 
+export interface PresidioConfig {
+  enabled: boolean;
+  timeoutMs: number;
+  startupTimeoutMs: number;
+  entities: string[];
+  scoreThreshold: number;
+}
+
+export function getPresidioConfig(): PresidioConfig {
+  const s = SettingsDefaultsManager.loadFromFile(path.join(dataDir(), 'settings.json'));
+  const get = (k: keyof SettingsDefaults) => s[k] ?? '';
+  const num = (k: keyof SettingsDefaults, fallback: number) => {
+    const n = parseInt(get(k), 10);
+    return Number.isFinite(n) ? n : fallback;
+  };
+  return {
+    enabled: get('CLAUDE_MEM_REDACTION_PRESIDIO_ENABLED') === 'true',
+    timeoutMs: num('CLAUDE_MEM_REDACTION_PRESIDIO_TIMEOUT_MS', 2000),
+    startupTimeoutMs: num('CLAUDE_MEM_REDACTION_PRESIDIO_STARTUP_TIMEOUT_MS', 60000),
+    entities: csv(get('CLAUDE_MEM_REDACTION_PRESIDIO_ENTITIES')),
+    scoreThreshold: Number(get('CLAUDE_MEM_REDACTION_PRESIDIO_SCORE_THRESHOLD')) || 0.5,
+  };
+}
+
 export function resolveRedactionConfig(project?: string): RedactionConfig {
   const s = SettingsDefaultsManager.loadFromFile(path.join(dataDir(), 'settings.json'));
   const get = (k: keyof SettingsDefaults) => s[k] ?? '';
