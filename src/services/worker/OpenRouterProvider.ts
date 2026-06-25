@@ -130,7 +130,7 @@ interface OpenRouterResponse {
   };
 }
 
-interface OpenRouterConfig {
+export interface OpenRouterConfig {
   apiKey: string;
   model: string;
   apiUrl: string;
@@ -139,8 +139,10 @@ interface OpenRouterConfig {
 }
 
 export class OpenRouterProvider extends OpenAICompatibleProvider<OpenRouterConfig> {
-  protected readonly providerName = 'OpenRouter';
-  protected readonly syntheticIdPrefix = 'openrouter';
+  // Typed as `string` (not the narrowed literal) so subclasses like
+  // CustomProvider can override these identifiers.
+  protected readonly providerName: string = 'OpenRouter';
+  protected readonly syntheticIdPrefix: string = 'openrouter';
   protected readonly requireNonEmptyToTruncate = false;
   protected readonly forwardEmptyMessageResponse = true;
 

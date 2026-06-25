@@ -340,6 +340,7 @@ export function ContextSettingsModal({
                   <option value="claude">Claude (uses your Claude account)</option>
                   <option value="gemini">Gemini (uses API key)</option>
                   <option value="openrouter">OpenRouter (multi-model)</option>
+                  <option value="custom">Custom (OpenAI-compatible endpoint)</option>
                 </select>
               </FormField>
 
@@ -441,6 +442,44 @@ export function ContextSettingsModal({
                       value={formState.CLAUDE_MEM_OPENROUTER_APP_NAME || 'claude-mem'}
                       onChange={(e) => updateSetting('CLAUDE_MEM_OPENROUTER_APP_NAME', e.target.value)}
                       placeholder="claude-mem"
+                    />
+                  </FormField>
+                </>
+              )}
+
+              {formState.CLAUDE_MEM_PROVIDER === 'custom' && (
+                <>
+                  <FormField
+                    label="Base URL"
+                    tooltip="OpenAI-compatible base URL. '/chat/completions' is appended automatically (e.g. http://100.104.227.128:8643/v1)."
+                  >
+                    <input
+                      type="text"
+                      value={formState.CLAUDE_MEM_CUSTOM_BASE_URL || ''}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_CUSTOM_BASE_URL', e.target.value)}
+                      placeholder="http://100.104.227.128:8643/v1"
+                    />
+                  </FormField>
+                  <FormField
+                    label="Model"
+                    tooltip="Model identifier passed verbatim to the endpoint (e.g. openai/fcm)"
+                  >
+                    <input
+                      type="text"
+                      value={formState.CLAUDE_MEM_CUSTOM_MODEL || ''}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_CUSTOM_MODEL', e.target.value)}
+                      placeholder="openai/fcm"
+                    />
+                  </FormField>
+                  <FormField
+                    label="API Key (Optional)"
+                    tooltip="Sent as a Bearer token. Leave blank for keyless/local endpoints."
+                  >
+                    <input
+                      type="password"
+                      value={formState.CLAUDE_MEM_CUSTOM_API_KEY || ''}
+                      onChange={(e) => updateSetting('CLAUDE_MEM_CUSTOM_API_KEY', e.target.value)}
+                      placeholder="Optional — leave blank if not required"
                     />
                   </FormField>
                 </>

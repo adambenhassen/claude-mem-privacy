@@ -65,6 +65,15 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
   /** Throw a provider-specific "API key not configured" error. */
   protected abstract missingApiKeyError(): Error;
 
+  /**
+   * Whether a non-empty API key is mandatory before a session may start.
+   * True for hosted gateways (OpenRouter, Gemini); a custom OpenAI-compatible
+   * endpoint may be a local/keyless server, so CustomProvider overrides this.
+   */
+  protected requireApiKey(): boolean {
+    return true;
+  }
+
   /** Issue the actual HTTP request and normalize its response. */
   protected abstract query(history: ConversationMessage[], config: TConfig): Promise<ProviderQueryResult>;
 
@@ -83,7 +92,7 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
     session.lastModelId = model;
     this.prepareSessionExtras(session, config);
 
-    if (!apiKey) {
+    if (this.requireApiKey() && !apiKey) {
       throw this.missingApiKeyError();
     }
 
