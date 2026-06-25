@@ -1701,7 +1701,10 @@ export class SessionStore {
     const nowEpoch = now.getTime();
     const resolved = resolveCreateSessionArgs(customTitle, platformSource);
     const normalizedPlatformSource = resolved.platformSource ?? DEFAULT_PLATFORM_SOURCE;
-    const storedUserPrompt = normalizeStoredPromptText(userPrompt);
+    const storedUserPrompt = redactText(normalizeStoredPromptText(userPrompt), { project, surface: 'sqlite' });
+    const safeCustomTitle = resolved.customTitle
+      ? redactText(resolved.customTitle, { project, surface: 'sqlite' })
+      : resolved.customTitle;
 
     const existing = this.db.prepare(`
       SELECT id, platform_source FROM sdk_sessions WHERE content_session_id = ?
@@ -1714,11 +1717,11 @@ export class SessionStore {
           WHERE content_session_id = ? AND (project IS NULL OR project = '')
         `).run(project, contentSessionId);
       }
-      if (resolved.customTitle) {
+      if (safeCustomTitle) {
         this.db.prepare(`
           UPDATE sdk_sessions SET custom_title = ?
           WHERE content_session_id = ? AND custom_title IS NULL
-        `).run(resolved.customTitle, contentSessionId);
+        `).run(safeCustomTitle, contentSessionId);
       }
 
       if (resolved.platformSource) {
@@ -1745,7 +1748,7 @@ export class SessionStore {
       INSERT INTO sdk_sessions
       (content_session_id, memory_session_id, project, platform_source, user_prompt, custom_title, started_at, started_at_epoch, status)
       VALUES (?, NULL, ?, ?, ?, ?, ?, ?, 'active')
-    `).run(contentSessionId, project, normalizedPlatformSource, storedUserPrompt, resolved.customTitle || null, now.toISOString(), nowEpoch);
+    `).run(contentSessionId, project, normalizedPlatformSource, storedUserPrompt, safeCustomTitle || null, now.toISOString(), nowEpoch);
 
     const row = this.db.prepare('SELECT id FROM sdk_sessions WHERE content_session_id = ?')
       .get(contentSessionId) as { id: number };
@@ -2370,7 +2373,7 @@ export class SessionStore {
       session.memory_session_id,
       session.project,
       normalizePlatformSource(session.platform_source),
-      session.user_prompt,
+      redactText(session.user_prompt, { project: session.project, surface: 'sqlite' }),
       session.started_at,
       session.started_at_epoch,
       session.completed_at,
@@ -2413,17 +2416,19 @@ export class SessionStore {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
+    const rt = (v: string | null) =>
+      typeof v === 'string' ? redactText(v, { project: summary.project, surface: 'sqlite' }) : v;
     const result = stmt.run(
       summary.memory_session_id,
       summary.project,
-      summary.request,
-      summary.investigated,
-      summary.learned,
-      summary.completed,
-      summary.next_steps,
+      rt(summary.request),
+      rt(summary.investigated),
+      rt(summary.learned),
+      rt(summary.completed),
+      rt(summary.next_steps),
       summary.files_read,
       summary.files_edited,
-      summary.notes,
+      rt(summary.notes),
       summary.prompt_number,
       summary.discovery_tokens || 0,
       summary.created_at,
@@ -2470,16 +2475,18 @@ export class SessionStore {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
+    const rt = (v: string | null) =>
+      typeof v === 'string' ? redactText(v, { project: obs.project, surface: 'sqlite' }) : v;
     const result = stmt.run(
       obs.memory_session_id,
       obs.project,
-      obs.text,
+      rt(obs.text),
       obs.type,
-      obs.title,
-      obs.subtitle,
-      obs.facts,
-      obs.narrative,
-      obs.concepts,
+      rt(obs.title),
+      rt(obs.subtitle),
+      rt(obs.facts),
+      rt(obs.narrative),
+      rt(obs.concepts),
       obs.files_read,
       obs.files_modified,
       obs.prompt_number,
@@ -2531,7 +2538,7 @@ export class SessionStore {
     const result = stmt.run(
       prompt.content_session_id,
       prompt.prompt_number,
-      prompt.prompt_text,
+      redactText(prompt.prompt_text, { surface: 'sqlite' }),
       prompt.created_at,
       prompt.created_at_epoch
     );

@@ -34,11 +34,44 @@ export interface Rule {
  * side of a `key = value` assignment: doc placeholders, `${VAR}` refs, and
  * ALL_CAPS env-var names used as identifiers.
  */
-const PLACEHOLDER =
-  /^(?:your[_-]?\w*|changeme|your-key-here|example\w*|x{3,}|<[^>]*>|\$\{?\w+\}?|[A-Z][A-Z0-9_]{2,})$/i;
+// Case-insensitive literal placeholders + ${VAR} references.
+const PLACEHOLDER_CI =
+  /^(?:your[_-]?\w*|changeme|your-key-here|example\w*|x{3,}|<[^>]*>|\$\{?\w+\}?)$/i;
+// ALL_CAPS env-var identifier — MUST be case-sensitive, otherwise a lowercase
+// secret like `supersecret` would be mistaken for an env name and skipped.
+const ENV_NAME = /^[A-Z][A-Z0-9_]{2,}$/;
 
 export function isPlaceholderValue(v: string): boolean {
-  return PLACEHOLDER.test(v.trim());
+  const t = v.trim();
+  return PLACEHOLDER_CI.test(t) || ENV_NAME.test(t);
+}
+
+/**
+ * Phone replacer. The bare PHONE regex also matches dates (2026-06-25), version
+ * strings, and IPs; this gate keeps only plausible phone numbers: an
+ * international `+` prefix with ≥8 digits, or ≥10 local digits, capped at 15
+ * (E.164 max). Dates/versions/IPs have ≤8 digits and are left untouched.
+ */
+export function phoneReplace(match: string): string {
+  const digits = match.replace(/\D/g, '');
+  if (digits.length > 15) return match;
+  const intl = match.trimStart().startsWith('+');
+  if (intl && digits.length >= 8) return '[REDACTED:PHONE]';
+  if (!intl && digits.length >= 10) return '[REDACTED:PHONE]';
+  return match;
+}
+
+/** ISO 13616 mod-97 IBAN checksum, so random `[A-Z]{2}\d{2}…` runs are skipped. */
+function ibanChecksumValid(raw: string): boolean {
+  const t = raw.replace(/\s/g, '').toUpperCase();
+  if (!/^[A-Z]{2}\d{2}[A-Z0-9]{10,30}$/.test(t)) return false;
+  const rearranged = t.slice(4) + t.slice(0, 4);
+  let remainder = 0;
+  for (const ch of rearranged) {
+    const value = ch >= 'A' && ch <= 'Z' ? String(ch.charCodeAt(0) - 55) : ch;
+    for (const d of value) remainder = (remainder * 10 + (d.charCodeAt(0) - 48)) % 97;
+  }
+  return remainder === 1;
 }
 
 /** Luhn checksum for credit-card validation. Accepts spaces/dashes. */
@@ -76,7 +109,7 @@ export const STATIC_RULES: Rule[] = [
   {
     category: 'SECRETS',
     label: 'PRIVATE_KEY',
-    regex: /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]{0,8000}?-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/g,
+    regex: /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----[\s\S]{0,100000}?-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/g,
   },
   {
     category: 'SECRETS',
@@ -93,7 +126,7 @@ export const STATIC_RULES: Rule[] = [
   {
     category: 'SECRETS',
     label: 'JWT',
-    regex: /\beyJ[A-Za-z0-9_-]{3,512}\.eyJ[A-Za-z0-9_-]{3,512}\.[A-Za-z0-9_-]{3,512}/g,
+    regex: /\beyJ[A-Za-z0-9_-]{3,4096}\.eyJ[A-Za-z0-9_-]{3,4096}\.[A-Za-z0-9_-]{3,4096}/g,
   },
 
   // --- specific provider prefixes (before generic sk-) ---
@@ -149,9 +182,18 @@ export const STATIC_RULES: Rule[] = [
     category: 'FINANCIAL',
     label: 'CREDIT_CARD',
     regex: /\b(?:\d[ -]?){13,19}\b/g,
-    replace: (m) => (luhn(m) ? '[REDACTED:CREDIT_CARD]' : m),
+    replace: (m) => {
+      const s = m.replace(/[ -]/g, '');
+      if (/^(\d)\1+$/.test(s)) return m; // reject low-entropy runs (e.g. all zeros)
+      return luhn(s) ? '[REDACTED:CREDIT_CARD]' : m;
+    },
   },
-  { category: 'FINANCIAL', label: 'IBAN', regex: /\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b/g },
+  {
+    category: 'FINANCIAL',
+    label: 'IBAN',
+    regex: /\b[A-Z]{2}\d{2}[A-Z0-9]{10,30}\b/g,
+    replace: (m) => (ibanChecksumValid(m) ? '[REDACTED:IBAN]' : m),
+  },
   { category: 'FINANCIAL', label: 'ETH_ADDRESS', regex: /\b0x[0-9a-fA-F]{40}\b/g },
   {
     category: 'FINANCIAL',
@@ -169,7 +211,9 @@ export const STATIC_RULES: Rule[] = [
   {
     category: 'NATIONAL_ID',
     label: 'EU_VAT',
-    regex: /\b(?:AT|BE|BG|CY|CZ|DE|DK|EE|EL|ES|FI|FR|HR|HU|IE|IT|LT|LU|LV|MT|NL|PL|PT|RO|SE|SI|SK)[0-9A-Z]{8,12}\b/g,
+    // Body must start with a digit (real VAT numbers are digit-led), so common
+    // hex-ish tokens like "DEADBEEF12" are not mistaken for a DE VAT number.
+    regex: /\b(?:AT|BE|BG|CY|CZ|DE|DK|EE|EL|ES|FI|FR|HR|HU|IE|IT|LT|LU|LV|MT|NL|PL|PT|RO|SE|SI|SK)\d[0-9A-Z]{7,11}\b/g,
   },
   {
     category: 'NATIONAL_ID',

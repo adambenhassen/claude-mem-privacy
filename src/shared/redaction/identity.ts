@@ -43,8 +43,12 @@ export function getOperatorIdentity(cwd: string = process.cwd()): OperatorIdenti
       emails.add(email);
       const local = email.split('@')[0] ?? '';
       // Only treat the local-part as a handle when it is distinctive enough that
-      // it won't redact common short words.
-      if (local.length >= 3) handles.add(local);
+      // it won't clobber common English words: it must contain a separator/digit
+      // (e.g. "jane.doe", "asmith2") or be reasonably long (>= 6). A bare short
+      // alpha local like "john" is skipped — the full-name rule still covers it.
+      if (local.length >= 3 && (/[._\-0-9]/.test(local) || local.length >= 6)) {
+        handles.add(local);
+      }
     }
   };
 

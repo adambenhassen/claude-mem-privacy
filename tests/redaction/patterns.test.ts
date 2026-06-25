@@ -42,6 +42,20 @@ describe('STATIC_RULES secrets', () => {
     expect(redactWith('api_key = YOUR_API_KEY')).toBe('api_key = YOUR_API_KEY');
   });
 
+  it('redacts a lowercase high-entropy assigned value (placeholder-flag regression)', () => {
+    expect(redactWith('password=supersecret')).toContain('[REDACTED:SECRET]');
+    expect(redactWith('password=supersecret')).not.toContain('supersecret');
+  });
+
+  it('validates IBAN checksum (redacts valid, skips invalid)', () => {
+    expect(redactWith('DE89370400440532013000')).toContain('[REDACTED:IBAN]');
+    expect(redactWith('AB12DEADBEEF123456')).toBe('AB12DEADBEEF123456');
+  });
+
+  it('does NOT treat hex-ish tokens as EU VAT', () => {
+    expect(redactWith('DEADBEEF12')).toBe('DEADBEEF12');
+  });
+
   it('does NOT redact git SHA or RFC-5737 doc IP', () => {
     expect(redactWith('9a1b2c3d4e5f60718293a4b5c6d7e8f901234567')).toBe(
       '9a1b2c3d4e5f60718293a4b5c6d7e8f901234567'

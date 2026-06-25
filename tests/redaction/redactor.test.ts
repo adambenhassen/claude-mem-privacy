@@ -73,3 +73,18 @@ describe('redact acceptance', () => {
     expect(counts.GITHUB_PAT).toBe(1);
   });
 });
+
+describe('phone over-redaction guard', () => {
+  it('does not redact ISO dates, versions, or doc IPs', () => {
+    __resetIdentityCache();
+    for (const f of ['2026-06-25', '12.34.56.78', '1.2.3', '192.0.2.40']) {
+      expect(redact(f).text).toBe(f);
+    }
+  });
+  it('redacts a real international phone number', () => {
+    __resetIdentityCache();
+    const { text } = redact('call me at +1 (415) 555-2671 today');
+    expect(text).toContain('[REDACTED:PHONE]');
+    expect(text).not.toContain('555-2671');
+  });
+});

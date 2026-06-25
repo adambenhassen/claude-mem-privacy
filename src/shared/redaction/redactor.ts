@@ -13,6 +13,7 @@ import {
   EMAIL_REGEX,
   PHONE_REGEX,
   POSTAL_REGEX,
+  phoneReplace,
   type Rule,
 } from './patterns.js';
 import { buildOperatorRules } from './identity.js';
@@ -69,13 +70,17 @@ export function redact(text: unknown, opts: { project?: string } = {}): RedactRe
     // Phone/postal run last so digit runs already claimed by card/SSN/IBAN rules
     // are not re-matched.
     if (!cfg.disabled.has('PHONE')) {
-      out = applyRule(out, { category: 'PHONE', label: 'PHONE', regex: PHONE_REGEX }, counts);
+      out = applyRule(out, { category: 'PHONE', label: 'PHONE', regex: PHONE_REGEX, replace: phoneReplace }, counts);
     }
     if (!cfg.disabled.has('POSTAL')) {
       out = applyRule(out, { category: 'POSTAL', label: 'POSTAL_ADDRESS', regex: POSTAL_REGEX }, counts);
     }
   } catch {
-    return { text, counts: {} };
+    // Fail CLOSED: a redactor that leaks raw input on error defeats its own
+    // purpose. Drop the whole value to a placeholder rather than risk emitting
+    // an unredacted secret. The realistic throw surface is near-zero (all rules
+    // are static, bounded regexes), so this should never fire in practice.
+    return { text: '[REDACTED:ERROR]', counts: { ERROR: 1 } };
   }
 
   return { text: out, counts };
