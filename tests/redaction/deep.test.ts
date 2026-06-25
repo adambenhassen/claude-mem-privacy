@@ -22,6 +22,7 @@ class FakeChild extends EventEmitter {
       return true;
     },
     end: () => {},
+    on: () => {},
   };
   kill() { return true; }
 }

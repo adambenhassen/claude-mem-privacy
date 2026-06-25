@@ -59,8 +59,14 @@ def main():
             req = json.loads(line)
             req_id = req.get("id")
             text = req.get("text", "")
-            entities = req.get("entities") or None
+            entities = req.get("entities")
             threshold = float(req.get("threshold", 0.5))
+
+            # An explicit empty list means "redact no ML entities" (operator
+            # narrowed the set to nothing); only an ABSENT key means "all".
+            if entities is not None and len(entities) == 0:
+                _emit({"id": req_id, "text": text, "counts": {}})
+                continue
 
             results = analyzer.analyze(text=text, entities=entities, language="en")
             results = [r for r in results if r.score >= threshold]

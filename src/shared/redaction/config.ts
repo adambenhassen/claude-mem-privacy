@@ -6,7 +6,11 @@
 import os from 'os';
 import path from 'path';
 import { SettingsDefaultsManager, type SettingsDefaults } from '../SettingsDefaultsManager.js';
-import type { Category, Rule } from './patterns.js';
+import { isCategory, type Category, type Rule } from './patterns.js';
+import { logger } from '../../utils/logger.js';
+
+/** Placeholder labels must be UPPER_SNAKE so they can't be re-matched (idempotency). */
+const VALID_LABEL = /^[A-Z][A-Z0-9_]*$/;
 
 export interface RedactionConfig {
   enabled: boolean;
@@ -79,9 +83,8 @@ export function resolveRedactionConfig(project?: string): RedactionConfig {
   const get = (k: keyof SettingsDefaults) => s[k] ?? '';
 
   let enabled = get('CLAUDE_MEM_REDACTION_ENABLED') !== 'false';
-  const disabled = new Set<Category>(
-    csv(get('CLAUDE_MEM_REDACTION_DISABLED_CATEGORIES')) as Category[]
-  );
+  const disabled = new Set<Category>();
+  addCategories(disabled, csv(get('CLAUDE_MEM_REDACTION_DISABLED_CATEGORIES')));
   let emailAllowlist = csv(get('CLAUDE_MEM_REDACTION_EMAIL_ALLOWLIST'));
 
   const overrides = parseJSON<Record<string, ProjectOverride>>(
@@ -89,10 +92,12 @@ export function resolveRedactionConfig(project?: string): RedactionConfig {
     {}
   );
   const o = project ? overrides[project] : undefined;
-  if (o) {
+  if (o && typeof o === 'object') {
     if (o.enabled === false) enabled = false;
-    for (const c of o.disabledCategories ?? []) disabled.add(c as Category);
-    if (o.emailAllowlist) emailAllowlist = [...emailAllowlist, ...o.emailAllowlist];
+    if (Array.isArray(o.disabledCategories)) addCategories(disabled, o.disabledCategories);
+    if (Array.isArray(o.emailAllowlist)) {
+      emailAllowlist = [...emailAllowlist, ...o.emailAllowlist.filter((e) => typeof e === 'string')];
+    }
   }
 
   const localeMap = parseJSON<Record<string, string>>(
@@ -101,12 +106,32 @@ export function resolveRedactionConfig(project?: string): RedactionConfig {
   );
   const localePatterns: Rule[] = [];
   for (const [label, src] of Object.entries(localeMap)) {
+    if (!VALID_LABEL.test(label)) {
+      // A non-UPPER_SNAKE label would yield a placeholder a later pass could
+      // re-match, breaking idempotency — drop it loudly.
+      logger.warn('REDACT', 'Ignoring configured locale pattern with invalid label (must be UPPER_SNAKE)', { label });
+      continue;
+    }
+    if (typeof src !== 'string') {
+      logger.warn('REDACT', 'Ignoring configured locale pattern with non-string source', { label });
+      continue;
+    }
     try {
       localePatterns.push({ category: 'NATIONAL_ID', label, regex: new RegExp(src, 'g') });
-    } catch {
-      // Skip an invalid configured regex rather than breaking the whole redactor.
+    } catch (error) {
+      // Skip an invalid configured regex rather than breaking the whole redactor
+      // — but never silently: the operator asked for this rule and it isn't running.
+      logger.warn('REDACT', 'Ignoring invalid configured locale redaction pattern', { label }, error as Error);
     }
   }
 
   return { enabled, disabled, emailAllowlist, localePatterns };
+}
+
+/** Add only valid category names to the set; warn on (and drop) unknowns. */
+function addCategories(set: Set<Category>, names: string[]): void {
+  for (const name of names) {
+    if (isCategory(name)) set.add(name);
+    else logger.warn('REDACT', 'Ignoring unknown redaction category in config', { category: name });
+  }
 }

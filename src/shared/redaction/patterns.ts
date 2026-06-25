@@ -11,22 +11,37 @@
  *    so re-running the redactor is idempotent.
  */
 
-export type Category =
-  | 'SECRETS'
-  | 'EMAIL'
-  | 'OPERATOR'
-  | 'PHONE'
-  | 'POSTAL'
-  | 'NATIONAL_ID'
-  | 'FINANCIAL'
-  | 'GEO';
+export const CATEGORIES = [
+  'SECRETS',
+  'EMAIL',
+  'OPERATOR',
+  'PHONE',
+  'POSTAL',
+  'NATIONAL_ID',
+  'FINANCIAL',
+  'GEO',
+] as const;
+
+export type Category = (typeof CATEGORIES)[number];
+
+/** Runtime guard so untrusted config category strings can be validated. */
+export function isCategory(s: string): s is Category {
+  return (CATEGORIES as readonly string[]).includes(s);
+}
 
 export interface Rule {
   category: Category;
   label: string;
   regex: RegExp;
-  /** Custom replacer; default emits `[REDACTED:<label>]`. */
-  replace?: (match: string, ...groups: string[]) => string;
+  /**
+   * Custom replacer. Receives exactly what `String.prototype.replace` passes:
+   * the match, then capture groups (each a `string` or `undefined` for an
+   * unmatched alternation branch), then the numeric offset and the full string.
+   * Typed as a single `any[]` rest because that arg list is heterogeneous
+   * (strings, undefined, number) and callers index it positionally (the first
+   * element is the match). Default emits `[REDACTED:<label>]`.
+   */
+  replace?: (...args: any[]) => string;
 }
 
 /**

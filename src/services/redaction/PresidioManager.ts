@@ -6,8 +6,11 @@
  * HARD INVARIANTS (this sits on the compression hot path):
  *  - Never throws to callers. Every failure path returns the input text.
  *  - Never hangs: every request has a timeout; startup has a deadline.
- *  - Default-off; only spawns when enabled. On crash, restarts once, then
- *    disables itself for the rest of the process (logs once).
+ *  - Default-off; only spawns when enabled. Any child death (a crash before OR
+ *    after it reported ready) counts toward a one-restart budget; a second death
+ *    disables the ML pass for the process. A reported init failure or a startup
+ *    timeout disables immediately. All transitions log once (counts/error-class
+ *    only, never input text).
  */
 
 import { spawn, execFile, type ChildProcess } from 'node:child_process';
@@ -54,6 +57,7 @@ export class PresidioManager {
   private restartedOnce = false;
   private idCounter = 0;
   private buffer = '';
+  private lastStderr = '';
   private readonly pending = new Map<number, Pending>();
 
   private constructor() {}
@@ -95,9 +99,12 @@ export class PresidioManager {
 
     this.starting = new Promise<boolean>((resolve) => {
       let settled = false;
+      let startupTimer: ReturnType<typeof setTimeout> | null = null;
+      let gone = false;
       const finish = (ok: boolean) => {
         if (settled) return;
         settled = true;
+        if (startupTimer) { clearTimeout(startupTimer); startupTimer = null; }
         this.starting = null;
         resolve(ok);
       };
@@ -112,13 +119,26 @@ export class PresidioManager {
         return;
       }
       this.child = childProc;
+      this.lastStderr = '';
 
-      const startupTimer = setTimeout(() => {
-        logger.warn('REDACT', 'Presidio sidecar startup timed out; disabling for this process');
-        void this.teardownChild();
+      startupTimer = setTimeout(() => {
+        logger.warn('REDACT', 'Presidio sidecar startup timed out; disabling for this process', { stderrTail: this.lastStderr.slice(-300) });
         this.disabled = true;
+        void this.teardownChild();
         finish(false);
       }, cfg.startupTimeoutMs);
+
+      // Drain stderr so the OS pipe buffer can't fill (which would stall the
+      // child), and keep a bounded tail for failure diagnostics. The sidecar
+      // never writes input text to stderr — only tracebacks/warnings — so this
+      // is safe to log.
+      childProc.stderr?.on('data', (chunk: Buffer) => {
+        this.lastStderr = (this.lastStderr + chunk.toString('utf8')).slice(-1000);
+      });
+      // An async stdin failure (e.g. EPIPE when the child dies mid-write) emits
+      // 'error' on the stream; swallow it here — the 'exit'/'error' handlers
+      // below fail any pending requests back to their regex fallback.
+      childProc.stdin?.on('error', () => { /* handled via onGone */ });
 
       childProc.stdout?.on('data', (chunk: Buffer) => {
         this.buffer += chunk.toString('utf8');
@@ -131,16 +151,35 @@ export class PresidioManager {
           try { msg = JSON.parse(line); } catch { continue; }
           if (msg.ready === true) {
             this.ready = true;
-            clearTimeout(startupTimer);
             finish(true);
+            continue;
+          }
+          if (msg.ready === false) {
+            // The sidecar reported a fatal init failure (import / model load).
+            // Disable immediately instead of waiting out the startup timeout.
+            logger.warn('REDACT', 'Presidio sidecar failed to initialize; disabling ML pass for this process', {
+              error: typeof msg.error === 'string' ? msg.error : undefined,
+              stderrTail: this.lastStderr.slice(-300),
+            });
+            this.disabled = true;
+            void this.teardownChild();
+            finish(false);
             continue;
           }
           if (typeof msg.id === 'number') this.resolvePending(msg);
         }
       });
 
-      childProc.on('exit', () => this.handleChildGone(cfg));
-      childProc.on('error', () => this.handleChildGone(cfg));
+      const onGone = () => {
+        if (gone) return; // 'error' then 'exit' can both fire — count once.
+        gone = true;
+        // A death before startup settled is a failed start: settle it (which
+        // clears the startup timer) so we don't wait out the full timeout.
+        if (!settled) finish(false);
+        this.handleChildGone();
+      };
+      childProc.on('exit', onGone);
+      childProc.on('error', onGone);
     });
 
     return this.starting;
@@ -154,8 +193,7 @@ export class PresidioManager {
     p.resolve({ text: typeof msg.text === 'string' ? msg.text : p.fallback, counts: msg.counts ?? {} });
   }
 
-  private handleChildGone(cfg: PresidioConfig): void {
-    const wasReady = this.ready;
+  private handleChildGone(): void {
     this.ready = false;
     this.child = null;
     this.starting = null;
@@ -166,10 +204,13 @@ export class PresidioManager {
     }
     this.pending.clear();
     if (this.disabled) return;
+    // Every child death counts toward the restart budget — including a crash
+    // BEFORE the sidecar reported ready — so a sidecar that always dies on boot
+    // disables after one retry instead of respawning on every call.
     if (this.restartedOnce) {
       this.disabled = true;
-      logger.warn('REDACT', 'Presidio sidecar exited again; disabling ML pass for this process');
-    } else if (wasReady) {
+      logger.warn('REDACT', 'Presidio sidecar exited again; disabling ML pass for this process', { stderrTail: this.lastStderr.slice(-300) });
+    } else {
       this.restartedOnce = true;
       logger.warn('REDACT', 'Presidio sidecar exited; will restart once on next use');
     }

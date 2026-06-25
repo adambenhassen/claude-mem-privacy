@@ -1806,7 +1806,7 @@ export class SessionStore {
     const timestampEpoch = overrideTimestampEpoch ?? Date.now();
     const timestampIso = new Date(timestampEpoch).toISOString();
 
-    const safe = redactFields(observation, ['title', 'subtitle', 'narrative', 'facts', 'concepts'], { project, surface: 'sqlite' });
+    const safe = redactFields(observation, ['title', 'subtitle', 'narrative', 'facts', 'concepts', 'metadata'], { project, surface: 'sqlite' });
 
     const contentHash = computeObservationContentHash(memorySessionId, safe.title, safe.narrative);
 
@@ -1833,13 +1833,13 @@ export class SessionStore {
       JSON.stringify(safe.files_modified),
       promptNumber || null,
       discoveryTokens,
-      observation.agent_type ?? null,
-      observation.agent_id ?? null,
+      safe.agent_type ?? null,
+      safe.agent_id ?? null,
       contentHash,
       timestampIso,
       timestampEpoch,
       generatedByModel || null,
-      observation.metadata ?? null
+      safe.metadata ?? null
     ) as { id: number; created_at_epoch: number } | null;
 
     if (inserted) {

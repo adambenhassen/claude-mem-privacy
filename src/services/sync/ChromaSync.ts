@@ -248,6 +248,9 @@ export class ChromaSync {
         ...(typeof d.metadata.subtitle === 'string'
           ? { subtitle: redactText(d.metadata.subtitle, { surface: 'chroma', project }) }
           : {}),
+        ...(typeof d.metadata.concepts === 'string'
+          ? { concepts: redactText(d.metadata.concepts, { surface: 'chroma', project }) }
+          : {}),
       },
     }));
 

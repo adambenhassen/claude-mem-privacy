@@ -1,4 +1,4 @@
-import { describe, it, expect, spyOn, mock } from 'bun:test';
+import { describe, it, expect, spyOn, mock, afterEach } from 'bun:test';
 
 mock.module('node:child_process', () => ({
   execFileSync: (_c: string, a: string[]) =>
@@ -11,11 +11,18 @@ mock.module('node:child_process', () => ({
 
 import { SettingsDefaultsManager } from '../../src/shared/SettingsDefaultsManager';
 import { redact } from '../../src/shared/redaction/redactor';
+import * as identity from '../../src/shared/redaction/identity';
 import { __resetIdentityCache } from '../../src/shared/redaction/identity';
 
-spyOn(SettingsDefaultsManager, 'loadFromFile').mockImplementation(
+const settingsSpy = spyOn(SettingsDefaultsManager, 'loadFromFile').mockImplementation(
   () => SettingsDefaultsManager.getAllDefaults() as any
 );
+function setSettings(over: Record<string, string>) {
+  settingsSpy.mockImplementation(() => ({ ...SettingsDefaultsManager.getAllDefaults(), ...over }) as any);
+}
+function resetSettings() {
+  settingsSpy.mockImplementation(() => SettingsDefaultsManager.getAllDefaults() as any);
+}
 
 const MUST_REDACT = [
   'ghp_0000000000000000000000000000000000',
@@ -71,6 +78,39 @@ describe('redact acceptance', () => {
     __resetIdentityCache();
     const { counts } = redact('ghp_0000000000000000000000000000000000');
     expect(counts.GITHUB_PAT).toBe(1);
+  });
+});
+
+describe('fail-closed on internal error', () => {
+  it('returns [REDACTED:ERROR] (never the raw input) when a rule throws', () => {
+    __resetIdentityCache();
+    const spy = spyOn(identity, 'buildOperatorRules').mockImplementation(() => {
+      throw new Error('boom');
+    });
+    const out = redact('secret token ghp_0000000000000000000000000000000000');
+    expect(out.text).toBe('[REDACTED:ERROR]');
+    expect(out.text).not.toContain('ghp_');
+    expect(out.counts.ERROR).toBe(1);
+    spy.mockRestore();
+  });
+});
+
+describe('operator identity precedence', () => {
+  afterEach(() => {
+    resetSettings();
+    __resetIdentityCache();
+  });
+
+  it('redacts the operator email even on an allowlisted domain, and even if OPERATOR is "disabled"', () => {
+    // operator (from mocked git) is Jane Doe <jane.doe@corp.test>
+    setSettings({
+      CLAUDE_MEM_REDACTION_EMAIL_ALLOWLIST: '@corp.test',
+      CLAUDE_MEM_REDACTION_DISABLED_CATEGORIES: 'OPERATOR',
+    });
+    __resetIdentityCache();
+    const out = redact('from jane.doe@corp.test and from bob@corp.test').text;
+    expect(out).not.toContain('jane.doe@corp.test'); // operator self-redact wins
+    expect(out).toContain('bob@corp.test'); // non-operator on allowlisted domain survives
   });
 });
 

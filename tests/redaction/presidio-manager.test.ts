@@ -11,7 +11,7 @@ class FakeChild extends EventEmitter {
   stdout = new EventEmitter();
   stderr = new EventEmitter();
   responder: Responder;
-  stdin: { write: (s: string) => boolean; end: () => void };
+  stdin: { write: (s: string) => boolean; end: () => void; on: () => void };
   constructor(responder: Responder) {
     super();
     this.responder = responder;
@@ -23,6 +23,7 @@ class FakeChild extends EventEmitter {
         return true;
       },
       end: () => {},
+      on: () => {},
     };
   }
   emitLine(obj: unknown) { this.stdout.emit('data', Buffer.from(JSON.stringify(obj) + '\n')); }
@@ -83,6 +84,39 @@ describe('PresidioManager', () => {
     installFakeSpawn(null); // never responds
     const res = await PresidioManager.getInstance().anonymize('hello Jane', {});
     expect(res).toEqual({ text: 'hello Jane', counts: {} });
+  });
+
+  it('disables immediately on a reported init failure (ready:false), no 60s wait', async () => {
+    spawnCalls = 0;
+    PresidioManager.__setSpawn(() => {
+      spawnCalls++;
+      child = new FakeChild(echoPersonResponder);
+      queueMicrotask(() => child.emitLine({ ready: false, error: 'ModuleNotFoundError' }));
+      return child as any;
+    });
+    const mgr = PresidioManager.getInstance();
+    const res = await mgr.anonymize('My name is Jane', {});
+    expect(res.text).toBe('My name is Jane'); // fell back
+    // disabled now → a second call must not spawn again
+    await mgr.anonymize('again', {});
+    expect(spawnCalls).toBe(1);
+  });
+
+  it('counts a pre-ready crash toward the restart budget', async () => {
+    spawnCalls = 0;
+    PresidioManager.__setSpawn(() => {
+      spawnCalls++;
+      child = new FakeChild(echoPersonResponder);
+      queueMicrotask(() => child.emit('exit', 1, null)); // crash BEFORE ready
+      return child as any;
+    });
+    const mgr = PresidioManager.getInstance();
+    expect((await mgr.anonymize('a', {})).text).toBe('a'); // 1st crash → restart allowed
+    expect((await mgr.anonymize('b', {})).text).toBe('b'); // 2nd crash → disable
+    const before = spawnCalls;
+    await mgr.anonymize('c', {}); // disabled → no spawn
+    expect(spawnCalls).toBe(before);
+    expect(before).toBe(2);
   });
 
   it('parseStalePresidioPids matches the script, excludes self and non-matches', () => {

@@ -26,9 +26,9 @@ export interface RedactResult {
 
 function applyRule(text: string, rule: Rule, counts: Record<string, number>): string {
   rule.regex.lastIndex = 0;
-  return text.replace(rule.regex, (...args: unknown[]) => {
+  return text.replace(rule.regex, (...args: any[]) => {
     const match = args[0] as string;
-    const out = rule.replace ? rule.replace(...(args as [string])) : `[REDACTED:${rule.label}]`;
+    const out = rule.replace ? rule.replace(...args) : `[REDACTED:${rule.label}]`;
     if (out !== match) counts[rule.label] = (counts[rule.label] ?? 0) + 1;
     return out;
   });
@@ -46,10 +46,10 @@ export function redact(text: unknown, opts: { project?: string } = {}): RedactRe
   let out = text;
 
   try {
-    // Operator identity first (most specific literal matches).
-    if (!cfg.disabled.has('OPERATOR')) {
-      for (const r of buildOperatorRules()) out = applyRule(out, r, counts);
-    }
+    // Operator identity is always-redact (spec): applied first, and gated ONLY
+    // by the global kill-switch (checked above) — never by the per-category
+    // disable set, so an operator can't accidentally turn off self-redaction.
+    for (const r of buildOperatorRules()) out = applyRule(out, r, counts);
 
     // Static rules + any configured locale national-ID patterns.
     for (const r of [...STATIC_RULES, ...cfg.localePatterns]) {
