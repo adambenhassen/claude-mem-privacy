@@ -9,26 +9,31 @@ describe('SettingsDefaultsManager', () => {
   let tempDir: string;
   let settingsPath: string;
   let prevDataDirEnv: string | undefined;
+  let prevPresidioEnv: string | undefined;
 
   beforeEach(() => {
     tempDir = join(tmpdir(), `settings-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
     mkdirSync(tempDir, { recursive: true });
     settingsPath = join(tempDir, 'settings.json');
 
-    // The preload tripwire (tests/preload.ts) pins CLAUDE_MEM_DATA_DIR for
-    // the whole run, and loadFromFile applies env overrides on top of file
-    // values — which would make every loadFromFile result diverge from
-    // getAllDefaults()'s hardcoded ~/.claude-mem default. These tests are
-    // about file > defaults behavior on an EXPLICIT settingsPath (no real
-    // data-dir I/O happens here), so drop the env override for their
-    // duration and restore it after.
+    // The preload tripwire (tests/preload.ts) pins CLAUDE_MEM_DATA_DIR and
+    // CLAUDE_MEM_REDACTION_PRESIDIO_ENABLED for the whole run, and loadFromFile
+    // applies env overrides on top of file values — which would make every
+    // loadFromFile result diverge from getAllDefaults()'s hardcoded defaults.
+    // These tests are about file > defaults behavior on an EXPLICIT settingsPath
+    // (no real data-dir I/O happens here), so drop those env overrides for
+    // their duration and restore them after.
     prevDataDirEnv = process.env.CLAUDE_MEM_DATA_DIR;
+    prevPresidioEnv = process.env.CLAUDE_MEM_REDACTION_PRESIDIO_ENABLED;
     delete process.env.CLAUDE_MEM_DATA_DIR;
+    delete process.env.CLAUDE_MEM_REDACTION_PRESIDIO_ENABLED;
   });
 
   afterEach(() => {
     if (prevDataDirEnv === undefined) delete process.env.CLAUDE_MEM_DATA_DIR;
     else process.env.CLAUDE_MEM_DATA_DIR = prevDataDirEnv;
+    if (prevPresidioEnv === undefined) delete process.env.CLAUDE_MEM_REDACTION_PRESIDIO_ENABLED;
+    else process.env.CLAUDE_MEM_REDACTION_PRESIDIO_ENABLED = prevPresidioEnv;
     try {
       rmSync(tempDir, { recursive: true, force: true });
     } catch {

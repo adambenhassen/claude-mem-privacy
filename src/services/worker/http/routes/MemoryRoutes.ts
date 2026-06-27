@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { BaseRouteHandler } from '../BaseRouteHandler.js';
 import { validateBody } from '../middleware/validateBody.js';
 import { logger } from '../../../../utils/logger.js';
+import { redactFieldsDeep } from '../../../../shared/redaction/index.js';
 import type { DatabaseManager } from '../../DatabaseManager.js';
 
 const saveMemorySchema = z.object({
@@ -40,7 +41,7 @@ export class MemoryRoutes extends BaseRouteHandler {
 
     const memorySessionId = sessionStore.getOrCreateManualSession(targetProject);
 
-    const observation = {
+    const rawObservation = {
       type: 'discovery',  // Use existing valid type
       title: title || text.substring(0, 60).trim() + (text.length > 60 ? '...' : ''),
       subtitle: 'Manual memory',
@@ -52,12 +53,21 @@ export class MemoryRoutes extends BaseRouteHandler {
       metadata: metadata ? JSON.stringify(metadata) : null,
     };
 
+    // Deep-redact (regex + Presidio NER) BEFORE persistence so SQLite, Chroma,
+    // AND the HTTP response below all carry the redacted text — never the raw
+    // user input.
+    const observation = await redactFieldsDeep(
+      rawObservation,
+      ['title', 'subtitle', 'narrative', 'facts', 'concepts', 'metadata'],
+      { project: targetProject, surface: 'sqlite' }
+    );
+
     const result = sessionStore.storeObservation(
       memorySessionId,
       targetProject,
       observation,
       0,  // promptNumber
-      0   
+      0
     );
 
     logger.info('HTTP', 'Manual observation saved', {

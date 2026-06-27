@@ -5,6 +5,7 @@ import { ingestObservation } from '../shared.js';
 import { validateBody } from '../middleware/validateBody.js';
 import { logger } from '../../../../utils/logger.js';
 import { stripMemoryTagsFromPrompt, isInternalProtocolPayload } from '../../../../utils/tag-stripping.js';
+import { redactTextDeep } from '../../../../shared/redaction/index.js';
 import { SessionManager } from '../../SessionManager.js';
 import { DatabaseManager } from '../../DatabaseManager.js';
 import { ClaudeProvider } from '../../ClaudeProvider.js';
@@ -416,8 +417,8 @@ export class SessionRoutes extends BaseRouteHandler {
         project,
         contentSessionId,
         promptByteLength,
-        maxBytes: MAX_USER_PROMPT_BYTES,
-        preview: prompt.slice(0, 200)
+        maxBytes: MAX_USER_PROMPT_BYTES
+        // No raw prompt preview: it would write unredacted user PII to local logs.
       });
       const buf = Buffer.from(prompt, 'utf8');
       let end = MAX_USER_PROMPT_BYTES;
@@ -430,12 +431,27 @@ export class SessionRoutes extends BaseRouteHandler {
       project,
       platformSource,
       prompt_length: prompt?.length,
-      customTitle
+      // Log presence, not the raw value — customTitle is free-form user text.
+      hasCustomTitle: !!customTitle
     });
 
     const store = this.dbManager.getSessionStore();
 
-    const sessionDbId = store.createSDKSession(contentSessionId, project, prompt, customTitle, platformSource);
+    // Strip claude-mem's injected memory context, then deep-redact the user's
+    // actual prompt text ONCE. Reused for the session row, the dedup lookup, and
+    // the stored user_prompts row, so every SQLite copy holds redacted text —
+    // and we avoid running Presidio over the (already-redacted, often large)
+    // injected context block on the hot per-submit path.
+    const cleanedPrompt = stripMemoryTagsFromPrompt(prompt);
+    const safeCleanedPrompt = cleanedPrompt
+      ? await redactTextDeep(cleanedPrompt, { project, surface: 'sqlite' })
+      : cleanedPrompt;
+
+    const safeCustomTitle = customTitle
+      ? await redactTextDeep(customTitle, { project, surface: 'sqlite' })
+      : customTitle;
+
+    const sessionDbId = store.createSDKSession(contentSessionId, project, safeCleanedPrompt, safeCustomTitle, platformSource);
 
     const dbSession = store.getSessionById(sessionDbId);
     const isNewSession = !dbSession?.memory_session_id;
@@ -452,8 +468,6 @@ export class SessionRoutes extends BaseRouteHandler {
     } else {
       logger.debug('HTTP', `[ALIGNMENT] New Session | contentSessionId=${contentSessionId} | prompt#=${promptNumber} | memorySessionId will be captured on first SDK response`);
     }
-
-    const cleanedPrompt = stripMemoryTagsFromPrompt(prompt);
 
     if (!cleanedPrompt || cleanedPrompt.trim() === '') {
       logger.debug('HOOK', 'Session init - prompt entirely private', {
@@ -473,7 +487,7 @@ export class SessionRoutes extends BaseRouteHandler {
 
     const duplicatePrompt = store.findRecentDuplicateUserPrompt(
       contentSessionId,
-      cleanedPrompt,
+      safeCleanedPrompt,
       USER_PROMPT_DEDUPE_WINDOW_MS
     );
 
@@ -496,7 +510,7 @@ export class SessionRoutes extends BaseRouteHandler {
       return;
     }
 
-    store.saveUserPrompt(contentSessionId, promptNumber, cleanedPrompt);
+    store.saveUserPrompt(contentSessionId, promptNumber, safeCleanedPrompt);
 
     const contextInjected = this.sessionManager.getSession(sessionDbId) !== undefined;
 

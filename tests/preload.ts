@@ -21,6 +21,17 @@ if (!process.env.CLAUDE_MEM_DATA_DIR) {
 }
 
 /**
+ * Presidio is on by default in production, but the suite must never spawn the
+ * real `uv` sidecar: it's slow (model load), leaks subprocesses, and isn't
+ * available in CI. Default it OFF here (an env override, so it wins over the
+ * shipped 'true' default) — tests that exercise the ML pass opt in explicitly
+ * by mocking SettingsDefaultsManager.loadFromFile + PresidioManager.__setSpawn.
+ */
+if (!process.env.CLAUDE_MEM_REDACTION_PRESIDIO_ENABLED) {
+  process.env.CLAUDE_MEM_REDACTION_PRESIDIO_ENABLED = 'false';
+}
+
+/**
  * Global posthog-node mock, registered via bunfig.toml [test].preload BEFORE
  * any test file or src module loads. It must be global, not per-file:
  *

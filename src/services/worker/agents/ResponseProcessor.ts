@@ -7,6 +7,7 @@ import { updateCursorContextForProject } from '../../integrations/CursorHooksIns
 import { notifyTelegram } from '../../integrations/TelegramNotifier.js';
 import { updateFolderClaudeMdFiles } from '../../../utils/claude-md-utils.js';
 import { getWorkerPort } from '../../../shared/worker-utils.js';
+import { redactFieldsDeep } from '../../../shared/redaction/index.js';
 import { SettingsDefaultsManager } from '../../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../../shared/paths.js';
 import type { ActiveSession } from '../../worker-types.js';
@@ -151,13 +152,24 @@ export async function processAgentResponse(
     agent_id: session.pendingAgentId ?? null
   }));
 
+  // Deep-redact (regex + Presidio NER) before persistence. For OpenAI-compatible
+  // providers the LLM input was already deep-redacted upstream so this is largely
+  // idempotent; for the Claude provider (no upstream deep pass) it's the only NER
+  // layer over generated content. Chroma redacts itself on sync.
+  const safeObservations = await Promise.all(labeledObservations.map(o =>
+    redactFieldsDeep(o, ['title', 'subtitle', 'narrative', 'facts', 'concepts'], { project: session.project, surface: 'sqlite' })
+  ));
+  const safeSummaryForStore = summaryForStore
+    ? await redactFieldsDeep(summaryForStore, ['request', 'investigated', 'learned', 'completed', 'next_steps', 'notes'], { project: session.project, surface: 'sqlite' })
+    : summaryForStore;
+
   let result: ReturnType<typeof sessionStore.storeObservations>;
   try {
     result = sessionStore.storeObservations(
       session.memorySessionId,
       session.project,
-      labeledObservations,
-      summaryForStore,
+      safeObservations,
+      safeSummaryForStore,
       session.lastPromptNumber,
       discoveryTokens,
       originalTimestamp ?? undefined,
@@ -251,15 +263,18 @@ export async function processAgentResponse(
   session.earliestPendingTimestamp = null;
   worker?.broadcastProcessingStatus?.();
 
+  // Use the deep-redacted copies for every downstream surface — Telegram
+  // (external egress), the SSE/UI broadcast, and Chroma sync — so raw
+  // free-form PII never leaves via any of them, not just SQLite.
   void notifyTelegram({
-    observations: labeledObservations,
+    observations: safeObservations,
     observationIds: result.observationIds,
     project: session.project,
     memorySessionId: session.memorySessionId,
   });
 
   await syncAndBroadcastObservations(
-    observations,
+    safeObservations,
     result,
     session,
     dbManager,
@@ -270,7 +285,7 @@ export async function processAgentResponse(
 
   await syncAndBroadcastSummary(
     summary,
-    summaryForStore,
+    safeSummaryForStore,
     result,
     session,
     dbManager,

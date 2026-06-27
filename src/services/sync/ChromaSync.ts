@@ -5,7 +5,7 @@ import { ParsedObservation, ParsedSummary } from '../../sdk/parser.js';
 import { SessionStore } from '../sqlite/SessionStore.js';
 import { logger } from '../../utils/logger.js';
 import { parseFileList } from '../sqlite/observations/files.js';
-import { redactText } from '../../shared/redaction/index.js';
+import { redactTextDeep } from '../../shared/redaction/index.js';
 
 interface ChromaDocument {
   id: string;
@@ -232,27 +232,29 @@ export class ChromaSync {
       return 0;
     }
 
-    // Last-line-of-defense redaction before anything reaches the vector index.
-    // Idempotent: content stored via redacted SQLite rows is already clean.
+    // Last-line-of-defense redaction before anything reaches the vector index:
+    // the regex secret pass plus the Presidio NER pass for free-form PII.
+    // Idempotent: content stored via already-redacted SQLite rows stays clean.
     const project = typeof documents[0]?.metadata?.project === 'string'
       ? (documents[0].metadata.project as string)
       : undefined;
-    documents = documents.map(d => ({
+    const ctx = { surface: 'chroma', project };
+    documents = await Promise.all(documents.map(async d => ({
       ...d,
-      document: redactText(d.document, { surface: 'chroma', project }),
+      document: await redactTextDeep(d.document, ctx),
       metadata: {
         ...d.metadata,
         ...(typeof d.metadata.title === 'string'
-          ? { title: redactText(d.metadata.title, { surface: 'chroma', project }) }
+          ? { title: await redactTextDeep(d.metadata.title, ctx) }
           : {}),
         ...(typeof d.metadata.subtitle === 'string'
-          ? { subtitle: redactText(d.metadata.subtitle, { surface: 'chroma', project }) }
+          ? { subtitle: await redactTextDeep(d.metadata.subtitle, ctx) }
           : {}),
         ...(typeof d.metadata.concepts === 'string'
-          ? { concepts: redactText(d.metadata.concepts, { surface: 'chroma', project }) }
+          ? { concepts: await redactTextDeep(d.metadata.concepts, ctx) }
           : {}),
       },
-    }));
+    })));
 
     await this.ensureCollectionExists();
 

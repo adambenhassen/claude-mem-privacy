@@ -186,10 +186,10 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_REDACTION_EMAIL_ALLOWLIST: '',               // Comma-separated allowed email addresses/domains (merged with built-in noreply@ + example.*)
     CLAUDE_MEM_REDACTION_LOCALE_PATTERNS: '{}',             // JSON map { LABEL: regexSource } of extra national-ID patterns
     CLAUDE_MEM_REDACTION_PROJECT_OVERRIDES: '{}',           // JSON map { project: { enabled?, disabledCategories?, emailAllowlist? } }
-    CLAUDE_MEM_REDACTION_PRESIDIO_ENABLED: 'false',         // Opt-in ML PII pass (Presidio sidecar) before OpenAI-compatible LLM sends
+    CLAUDE_MEM_REDACTION_PRESIDIO_ENABLED: 'true',          // ML PII pass (Presidio sidecar) over LLM sends + persisted content; falls back to regex on any sidecar failure
     CLAUDE_MEM_REDACTION_PRESIDIO_TIMEOUT_MS: '2000',       // Per-call anonymize timeout; on timeout fall back to the regex result
     CLAUDE_MEM_REDACTION_PRESIDIO_STARTUP_TIMEOUT_MS: '60000', // Sidecar boot budget (first run downloads the spaCy model)
-    CLAUDE_MEM_REDACTION_PRESIDIO_ENTITIES: 'PERSON,LOCATION,NRP,ORGANIZATION,ADDRESS', // Presidio entity types to redact
+    CLAUDE_MEM_REDACTION_PRESIDIO_ENTITIES: 'PERSON,LOCATION,ADDRESS', // Presidio entity types to redact (NRP/ORGANIZATION excluded by default — they over-redact technical content)
     CLAUDE_MEM_REDACTION_PRESIDIO_SCORE_THRESHOLD: '0.5',   // Minimum Presidio confidence score
   };
 

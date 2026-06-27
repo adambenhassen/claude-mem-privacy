@@ -30,21 +30,72 @@ export function redactForLLM(text: string, ctx: { project?: string } = {}): stri
 }
 
 /**
- * Deep LLM-input redaction: the synchronous regex core (always) PLUS, when the
- * optional Presidio sidecar is enabled, an ML NER pass for free-form PII
- * (names/locations/orgs/addresses). Any sidecar failure falls back to the regex
- * result — never throws, never blocks beyond the configured timeout.
+ * Presidio-only pass over already-regexed text. Any sidecar failure (disabled,
+ * crash, timeout) falls back to the input — never throws, never blocks beyond
+ * the configured timeout. The `surface` tag flows into count-only logging.
  */
-export async function redactForLLMDeep(text: string, ctx: { project?: string } = {}): Promise<string> {
-  const regexed = redactForLLM(text, ctx);
+async function presidioPass(
+  regexed: string,
+  ctx: { project?: string },
+  surface: string
+): Promise<string> {
   try {
     const { PresidioManager } = await import('../../services/redaction/PresidioManager.js');
     const { text: out, counts } = await PresidioManager.getInstance().anonymize(regexed, ctx);
-    logCounts('llm-input-ner', ctx.project, counts);
+    logCounts(surface, ctx.project, counts);
     return out;
   } catch {
     return regexed;
   }
+}
+
+/**
+ * Deep LLM-input redaction: the synchronous regex core (always) PLUS, when the
+ * optional Presidio sidecar is enabled, an ML NER pass for free-form PII
+ * (names/locations/addresses).
+ */
+export async function redactForLLMDeep(text: string, ctx: { project?: string } = {}): Promise<string> {
+  const regexed = redactForLLM(text, ctx);
+  return presidioPass(regexed, ctx, 'llm-input-ner');
+}
+
+/**
+ * Deep persistence redaction: the regex core PLUS the Presidio NER pass. Mirror
+ * of redactText for surfaces (SQLite, Chroma) that persist free-form content.
+ */
+export async function redactTextDeep(
+  text: string,
+  ctx: { project?: string; surface?: string } = {}
+): Promise<string> {
+  const regexed = redactText(text, ctx);
+  return presidioPass(regexed, { project: ctx.project }, `${ctx.surface ?? 'persist'}-ner`);
+}
+
+/**
+ * Deep variant of redactFields: applies the regex core (merged count log) then
+ * the Presidio NER pass to each listed string / string-array field.
+ */
+export async function redactFieldsDeep<T extends Record<string, unknown>>(
+  obj: T,
+  fields: (keyof T)[],
+  ctx: { project?: string; surface?: string } = {}
+): Promise<T> {
+  const clone = redactFields(obj, fields, ctx);
+  const opts = { project: ctx.project };
+  const surface = `${ctx.surface ?? 'persist'}-ner`;
+
+  for (const f of fields) {
+    const v = clone[f];
+    if (typeof v === 'string') {
+      clone[f] = (await presidioPass(v, opts, surface)) as T[keyof T];
+    } else if (Array.isArray(v)) {
+      clone[f] = (await Promise.all(
+        v.map((item) => (typeof item === 'string' ? presidioPass(item, opts, surface) : item))
+      )) as T[keyof T];
+    }
+  }
+
+  return clone;
 }
 
 export function redactText(
