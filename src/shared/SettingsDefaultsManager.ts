@@ -189,7 +189,7 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_REDACTION_PRESIDIO_ENABLED: 'true',          // ML PII pass (Presidio sidecar) over LLM sends + persisted content; falls back to regex on any sidecar failure
     CLAUDE_MEM_REDACTION_PRESIDIO_TIMEOUT_MS: '2000',       // Per-call anonymize timeout; on timeout fall back to the regex result
     CLAUDE_MEM_REDACTION_PRESIDIO_STARTUP_TIMEOUT_MS: '60000', // Sidecar boot budget (first run downloads the spaCy model)
-    CLAUDE_MEM_REDACTION_PRESIDIO_ENTITIES: 'PERSON,LOCATION,ADDRESS', // Presidio entity types to redact (NRP/ORGANIZATION excluded by default — they over-redact technical content)
+    CLAUDE_MEM_REDACTION_PRESIDIO_ENTITIES: 'PERSON,LOCATION', // Presidio entity types to redact. NRP/ORGANIZATION excluded (over-redact technical content); ADDRESS excluded (no Presidio recognizer — street addresses are covered by the regex POSTAL pattern)
     CLAUDE_MEM_REDACTION_PRESIDIO_SCORE_THRESHOLD: '0.5',   // Minimum Presidio confidence score
   };
 

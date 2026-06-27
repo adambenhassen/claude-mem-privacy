@@ -5,6 +5,7 @@ import type { DatabaseManager } from '../DatabaseManager.js';
 import type { SessionEventBroadcaster } from '../events/SessionEventBroadcaster.js';
 import type { ParsedSummary } from '../../../sdk/parser.js';
 import { stripMemoryTagsFromJson } from '../../../utils/tag-stripping.js';
+import { redactText } from '../../../shared/redaction/index.js';
 import { isProjectExcluded, isProjectAllowed } from '../../../utils/project-filter.js';
 import { SettingsDefaultsManager } from '../../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../../shared/paths.js';
@@ -116,11 +117,15 @@ export async function ingestObservation(payload: ObservationPayload): Promise<In
     return { ok: true, status: 'skipped', reason: 'private' };
   }
 
+  // Regex-redact before the raw tool payload lands in the pending_messages
+  // queue, so secrets are never at rest there. (Names/locations get the Presidio
+  // pass later when observations are generated; the per-tool ML cost isn't worth
+  // paying on this transient queue.)
   const cleanedToolInput = payload.toolInput !== undefined
-    ? stripMemoryTagsFromJson(JSON.stringify(payload.toolInput))
+    ? redactText(stripMemoryTagsFromJson(JSON.stringify(payload.toolInput)), { project, surface: 'queue' })
     : '{}';
   const cleanedToolResponse = payload.toolResponse !== undefined
-    ? stripMemoryTagsFromJson(JSON.stringify(payload.toolResponse))
+    ? redactText(stripMemoryTagsFromJson(JSON.stringify(payload.toolResponse)), { project, surface: 'queue' })
     : '{}';
 
   await sessionManager.queueObservation(sessionDbId, {
@@ -182,7 +187,11 @@ export async function ingestSummary(payload: SummaryPayload): Promise<IngestResu
       return { ok: false, reason: message, status: 500 };
     }
 
-    await sessionManager.queueSummarize(sessionDbId, payload.lastAssistantMessage);
+    // Regex-redact the assistant message before it sits in the queue at rest.
+    const safeLastAssistantMessage = payload.lastAssistantMessage !== undefined
+      ? redactText(payload.lastAssistantMessage, { project, surface: 'queue' })
+      : payload.lastAssistantMessage;
+    await sessionManager.queueSummarize(sessionDbId, safeLastAssistantMessage);
     await ensureGeneratorRunning?.(sessionDbId, 'summarize');
 
     return { ok: true, sessionDbId };

@@ -333,6 +333,9 @@ export class PresidioManager {
     return new Promise<AnonymizeResult>((resolve) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
+        // Observability for the fail-open path: the regex-redacted text is still
+        // returned, but a recurring timeout means the NER pass is being skipped.
+        logger.debug('REDACT', 'Presidio anonymize timed out; using regex-redacted fallback', { timeoutMs: cfg.timeoutMs });
         resolve(fallback);
       }, cfg.timeoutMs);
       this.pending.set(id, { resolve, timer, fallback: text });

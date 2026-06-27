@@ -5,7 +5,7 @@ import { ingestObservation } from '../shared.js';
 import { validateBody } from '../middleware/validateBody.js';
 import { logger } from '../../../../utils/logger.js';
 import { stripMemoryTagsFromPrompt, isInternalProtocolPayload } from '../../../../utils/tag-stripping.js';
-import { redactTextDeep } from '../../../../shared/redaction/index.js';
+import { redactTextDeep, redactText } from '../../../../shared/redaction/index.js';
 import { SessionManager } from '../../SessionManager.js';
 import { DatabaseManager } from '../../DatabaseManager.js';
 import { ClaudeProvider } from '../../ClaudeProvider.js';
@@ -356,8 +356,10 @@ export class SessionRoutes extends BaseRouteHandler {
       return;
     }
 
+    // Regex-redact before the assistant message enters the queue (matches the
+    // shared ingestSummary path; deep NER still runs at summary generation).
     const cleanedLastAssistantMessage = last_assistant_message
-      ? stripMemoryTagsFromPrompt(String(last_assistant_message))
+      ? redactText(stripMemoryTagsFromPrompt(String(last_assistant_message)), { surface: 'queue' })
       : last_assistant_message;
     await this.sessionManager.queueSummarize(sessionDbId, cleanedLastAssistantMessage);
 

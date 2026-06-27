@@ -3,6 +3,7 @@ import { DatabaseManager } from './DatabaseManager.js';
 import { SessionManager } from './SessionManager.js';
 import { logger } from '../../utils/logger.js';
 import { buildInitPrompt, buildObservationPrompt, buildSummaryPrompt, buildContinuationPrompt } from '../../sdk/prompts.js';
+import { redactForLLMDeep, redactText } from '../../shared/redaction/index.js';
 import { SettingsDefaultsManager } from '../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH, OBSERVER_SESSIONS_DIR, ensureDir, paths } from '../../shared/paths.js';
 import { buildIsolatedEnvWithFreshOAuth, getAuthMethodDescription } from '../../shared/EnvManager.js';
@@ -355,9 +356,10 @@ export class ClaudeProvider {
           const originalTimestamp = session.earliestPendingTimestamp;
 
           if (responseSize > 0) {
-            const truncatedResponse = responseSize > 100
-              ? textContent.substring(0, 100) + '...'
-              : textContent;
+            // Regex-redact the model-output preview before it reaches local logs
+            // — the parsed response is only deep-redacted later, in processAgentResponse.
+            const safePreview = redactText(textContent.substring(0, 100), { surface: 'log' });
+            const truncatedResponse = responseSize > 100 ? safePreview + '...' : safePreview;
             logger.dataOut('SDK', `Response received (${responseSize} chars)`, {
               sessionId: session.sessionDbId,
               promptNumber: session.lastPromptNumber
@@ -471,9 +473,12 @@ export class ClaudeProvider {
       promptType: isInitPrompt ? 'INIT' : 'CONTINUATION'
     });
 
-    const initPrompt = isInitPrompt
-      ? buildInitPrompt(session.project, session.contentSessionId, session.userPrompt, mode)
-      : buildContinuationPrompt(session.userPrompt, session.lastPromptNumber, session.contentSessionId, mode);
+    const initPrompt = await this.deepRedact(
+      isInitPrompt
+        ? buildInitPrompt(session.project, session.contentSessionId, session.userPrompt, mode)
+        : buildContinuationPrompt(session.userPrompt, session.lastPromptNumber, session.contentSessionId, mode),
+      session.project
+    );
 
     session.conversationHistory.push({ role: 'user', content: initPrompt });
 
@@ -503,14 +508,14 @@ export class ClaudeProvider {
           session.lastPromptNumber = message.prompt_number;
         }
 
-        const obsPrompt = buildObservationPrompt({
+        const obsPrompt = await this.deepRedact(buildObservationPrompt({
           id: 0, // Not used in prompt
           tool_name: message.tool_name!,
           tool_input: JSON.stringify(message.tool_input),
           tool_output: JSON.stringify(message.tool_response),
           created_at_epoch: Date.now(),
           cwd: message.cwd
-        });
+        }), session.project);
 
         session.conversationHistory.push({ role: 'user', content: obsPrompt });
 
@@ -527,13 +532,13 @@ export class ClaudeProvider {
           isSynthetic: true
         };
       } else if (message.type === 'summarize') {
-        const summaryPrompt = buildSummaryPrompt({
+        const summaryPrompt = await this.deepRedact(buildSummaryPrompt({
           id: session.sessionDbId,
           memory_session_id: session.memorySessionId,
           project: session.project,
           user_prompt: session.userPrompt,
           last_assistant_message: message.last_assistant_message || ''
-        }, mode);
+        }, mode), session.project);
 
         session.conversationHistory.push({ role: 'user', content: summaryPrompt });
 
@@ -551,6 +556,15 @@ export class ClaudeProvider {
         };
       }
     }
+  }
+
+  /**
+   * ML PII pass applied to each prompt at the SDK send boundary, mirroring
+   * OpenAICompatibleProvider. The regex core already ran inside the prompt
+   * builders; this adds Presidio NER when enabled and is a no-op otherwise.
+   */
+  private deepRedact(content: string, project: string): Promise<string> {
+    return redactForLLMDeep(content, { project });
   }
 
   private getModelId(): string {
