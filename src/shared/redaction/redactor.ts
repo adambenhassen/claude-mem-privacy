@@ -17,7 +17,7 @@ import {
   type Rule,
 } from './patterns.js';
 import { buildOperatorRules } from './identity.js';
-import { resolveRedactionConfig, isEmailAllowed } from './config.js';
+import { resolveRedactionConfig, isEmailAllowed, type RedactionConfig } from './config.js';
 
 export interface RedactResult {
   text: string;
@@ -34,12 +34,17 @@ function applyRule(text: string, rule: Rule, counts: Record<string, number>): st
   });
 }
 
-export function redact(text: unknown, opts: { project?: string } = {}): RedactResult {
+export function redact(
+  text: unknown,
+  opts: { project?: string; config?: RedactionConfig } = {}
+): RedactResult {
   if (typeof text !== 'string' || text.length === 0) {
     return { text: typeof text === 'string' ? text : '', counts: {} };
   }
 
-  const cfg = resolveRedactionConfig(opts.project);
+  // Callers redacting many fields of one object pass a pre-resolved config so the
+  // settings + denylist files are read (and rules compiled) once, not per field.
+  const cfg = opts.config ?? resolveRedactionConfig(opts.project);
   if (!cfg.enabled) return { text, counts: {} };
 
   const counts: Record<string, number> = {};

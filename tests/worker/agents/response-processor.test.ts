@@ -9,6 +9,17 @@ mock.module('../../../src/shared/worker-utils.js', () => ({
   getWorkerPort: () => 37777,
 }));
 
+// Capture what file paths reach the folder-CLAUDE.md writer (only invoked when the
+// setting is enabled — see the file-path redaction tests below).
+const folderClaudeMdCalls: string[][] = [];
+let folderClaudeMdError: Error | null = null;
+mock.module('../../../src/utils/claude-md-utils.js', () => ({
+  updateFolderClaudeMdFiles: (paths: string[]) => {
+    folderClaudeMdCalls.push(paths);
+    return folderClaudeMdError ? Promise.reject(folderClaudeMdError) : Promise.resolve();
+  },
+}));
+
 mock.module('../../../src/services/domain/ModeManager.js', () => ({
   ModeManager: {
     getInstance: () => ({
@@ -28,6 +39,7 @@ mock.module('../../../src/services/domain/ModeManager.js', () => ({
 
 import { processAgentResponse } from '../../../src/services/worker/agents/ResponseProcessor.js';
 import { SUMMARY_MODE_MARKER } from '../../../src/sdk/prompts.js';
+import { SettingsDefaultsManager } from '../../../src/shared/SettingsDefaultsManager.js';
 import type { WorkerRef, StorageResult } from '../../../src/services/worker/agents/types.js';
 import type { ActiveSession } from '../../../src/services/worker-types.js';
 import type { DatabaseManager } from '../../../src/services/worker/DatabaseManager.js';
@@ -578,6 +590,119 @@ describe('ResponseProcessor', () => {
       );
 
       expect(mockBroadcastProcessingStatus).toHaveBeenCalled();
+    });
+  });
+
+  describe('file-path redaction (#2)', () => {
+    const TOKEN = 'ghp_' + '0'.repeat(36);
+
+    // Presidio NER is irrelevant to these regex-secret assertions and would spawn
+    // a sidecar; disable it (and keep the folder-CLAUDE.md feature off by default).
+    function settingsWith(over: Record<string, string> = {}) {
+      return spyOn(SettingsDefaultsManager, 'loadFromFile').mockImplementation(
+        () => ({
+          ...SettingsDefaultsManager.getAllDefaults(),
+          CLAUDE_MEM_REDACTION_PRESIDIO_ENABLED: 'false',
+          ...over,
+        }) as any
+      );
+    }
+
+    it('redacts secrets in files_read / files_modified before storage and broadcast', async () => {
+      const s = settingsWith();
+      const session = createMockSession();
+      const responseText = `
+        <observation>
+          <type>discovery</type>
+          <title>t</title>
+          <narrative>n</narrative>
+          <facts></facts>
+          <concepts></concepts>
+          <files_read><file>src/${TOKEN}/a.ts</file></files_read>
+          <files_modified><file>config/${TOKEN}.json</file></files_modified>
+        </observation>
+      `;
+
+      await processAgentResponse(
+        responseText, session, mockDbManager, mockSessionManager, mockWorker, 100, null, 'TestAgent'
+      );
+
+      const [, , observations] = mockStoreObservations.mock.calls[0];
+      expect(JSON.stringify(observations[0].files_read)).not.toContain(TOKEN);
+      expect(JSON.stringify(observations[0].files_modified)).not.toContain(TOKEN);
+      expect(JSON.stringify(observations[0].files_read)).toContain('[REDACTED:GITHUB_PAT]');
+
+      // The SSE broadcast must carry the redacted paths too.
+      const obsCall = mockBroadcast.mock.calls.find((c: any[]) => c[0].type === 'new_observation');
+      expect(obsCall[0].observation.files_modified).not.toContain(TOKEN);
+
+      s.mockRestore();
+    });
+
+    it('passes RAW (unredacted) file paths to the folder-CLAUDE.md writer', async () => {
+      folderClaudeMdCalls.length = 0;
+      const s = settingsWith({ CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED: 'true' });
+      const session = createMockSession();
+      const rawPath = `src/${TOKEN}/a.ts`;
+      const responseText = `
+        <observation>
+          <type>discovery</type>
+          <title>t</title>
+          <narrative>n</narrative>
+          <facts></facts>
+          <concepts></concepts>
+          <files_read><file>${rawPath}</file></files_read>
+          <files_modified></files_modified>
+        </observation>
+      `;
+
+      await processAgentResponse(
+        responseText, session, mockDbManager, mockSessionManager, mockWorker, 100, null, 'TestAgent'
+      );
+
+      // The writer touches real files on disk, so it must get the real path, not
+      // the redacted placeholder — while storage above stays redacted.
+      expect(folderClaudeMdCalls.length).toBe(1);
+      expect(folderClaudeMdCalls[0]).toContain(rawPath);
+
+      s.mockRestore();
+    });
+
+    it('does NOT leak the raw file path into logs when the folder writer fails', async () => {
+      folderClaudeMdCalls.length = 0;
+      const rawPath = `src/${TOKEN}/a.ts`;
+      folderClaudeMdError = new Error(`EACCES: permission denied, open '${rawPath}'`);
+      const s = settingsWith({ CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED: 'true' });
+      const session = createMockSession();
+      const responseText = `
+        <observation>
+          <type>discovery</type>
+          <title>t</title>
+          <narrative>n</narrative>
+          <facts></facts>
+          <concepts></concepts>
+          <files_read><file>${rawPath}</file></files_read>
+          <files_modified></files_modified>
+        </observation>
+      `;
+
+      await processAgentResponse(
+        responseText, session, mockDbManager, mockSessionManager, mockWorker, 100, null, 'TestAgent'
+      );
+      // The writer's .catch runs on a later microtask — let it settle.
+      await new Promise((r) => setTimeout(r, 10));
+
+      // Inspect Error args explicitly: Error.message/stack are non-enumerable, so
+      // JSON.stringify would miss them — but the logger serializes them.
+      for (const call of (logger.warn as any).mock.calls) {
+        for (const arg of call) {
+          const text = arg instanceof Error ? `${arg.message} ${arg.stack ?? ''}` : JSON.stringify(arg);
+          expect(text).not.toContain(TOKEN);
+        }
+      }
+
+      folderClaudeMdError = null;
+      s.mockRestore();
     });
   });
 

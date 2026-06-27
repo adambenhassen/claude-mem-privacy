@@ -8,6 +8,7 @@
 
 import { logger } from '../../utils/logger.js';
 import { redact } from './redactor.js';
+import { resolveRedactionConfig } from './config.js';
 
 export { redact } from './redactor.js';
 export type { RedactResult } from './redactor.js';
@@ -30,9 +31,26 @@ export function redactForLLM(text: string, ctx: { project?: string } = {}): stri
 }
 
 /**
+ * Whether the "Presidio NER pass unavailable" warning has already fired this
+ * process. Presidio is enabled by default, so a broken sidecar would otherwise
+ * log on every field of every observation — warn once, then stay quiet.
+ */
+let presidioFailureWarned = false;
+
+/** Test seam: re-arm the once-per-process Presidio-failure warning. */
+export function __resetPresidioFailureWarning(): void {
+  presidioFailureWarned = false;
+}
+
+/**
  * Presidio-only pass over already-regexed text. Any sidecar failure (disabled,
  * crash, timeout) falls back to the input — never throws, never blocks beyond
  * the configured timeout. The `surface` tag flows into count-only logging.
+ *
+ * PresidioManager.anonymize() is built never to throw and to log its own state,
+ * so this catch only fires on the unexpected (e.g. the dynamic import failing).
+ * That silently drops the NER layer for free-form PII, so surface it once — with
+ * the error CLASS only, never its message or the input text.
  */
 async function presidioPass(
   regexed: string,
@@ -44,7 +62,14 @@ async function presidioPass(
     const { text: out, counts } = await PresidioManager.getInstance().anonymize(regexed, ctx);
     logCounts(surface, ctx.project, counts);
     return out;
-  } catch {
+  } catch (error) {
+    if (!presidioFailureWarned) {
+      presidioFailureWarned = true;
+      logger.warn('REDACT', 'Presidio NER pass unavailable; using regex-only result', {
+        surface,
+        error: (error as Error)?.name,
+      });
+    }
     return regexed;
   }
 }
@@ -114,7 +139,9 @@ export function redactFields<T extends Record<string, unknown>>(
 ): T {
   const merged: Record<string, number> = {};
   const clone: T = { ...obj };
-  const opts = { project: ctx.project };
+  // Resolve once for the whole object (reads settings + denylist, compiles rules)
+  // and reuse across every field rather than paying that cost per field.
+  const opts = { project: ctx.project, config: resolveRedactionConfig(ctx.project) };
 
   for (const f of fields) {
     const v = clone[f];

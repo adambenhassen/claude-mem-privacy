@@ -1,8 +1,9 @@
-import { describe, it, expect, afterEach } from 'bun:test';
-import { mkdtempSync, writeFileSync, rmSync } from 'fs';
+import { describe, it, expect, afterEach, spyOn } from 'bun:test';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { redact } from '../../src/shared/redaction/redactor';
+import { logger } from '../../src/utils/logger';
 
 let prevDataDir: string | undefined;
 let dir: string | undefined;
@@ -16,6 +17,10 @@ function useDataDir(): string {
 
 function writeSecret(content: unknown) {
   writeFileSync(join(useDataDir(), 'redaction.local.json'), JSON.stringify(content));
+}
+
+function writeSecretRaw(raw: string) {
+  writeFileSync(join(useDataDir(), 'redaction.local.json'), raw);
 }
 
 afterEach(() => {
@@ -59,5 +64,56 @@ describe('private secret denylist (redaction.local.json)', () => {
     useDataDir();
     const { text } = redact('nothing custom here');
     expect(text).toBe('nothing custom here');
+  });
+
+  it('is a no-op (and does not throw) when the denylist JSON is malformed, without echoing its contents', () => {
+    const warn = spyOn(logger, 'warn').mockImplementation(() => {});
+    writeSecretRaw('{ terms: [ broken json PRIVATE_TERM_ABC');
+    const { text } = redact('mentions PRIVATE_TERM_ABC verbatim');
+    expect(text).toBe('mentions PRIVATE_TERM_ABC verbatim'); // not configured → unchanged, no crash
+    expect(warn).toHaveBeenCalled();
+    // The malformed file holds private terms — its contents must never reach the logs.
+    for (const call of warn.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain('PRIVATE_TERM_ABC');
+    }
+    warn.mockRestore();
+  });
+
+  it('skips an invalid denylist regex without leaking the pattern source to logs', () => {
+    const warn = spyOn(logger, 'warn').mockImplementation(() => {});
+    writeSecret({ patterns: { BADGE: '(unclosed_group_PRIVATESRC' } });
+    const { text } = redact('some ordinary text');
+    expect(text).toBe('some ordinary text'); // invalid pattern dropped, no crash
+    expect(warn).toHaveBeenCalled();
+    for (const call of warn.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain('unclosed_group_PRIVATESRC');
+    }
+    warn.mockRestore();
+  });
+
+  it('rejects a catastrophic denylist regex (ReDoS) without compiling or leaking it', () => {
+    const warn = spyOn(logger, 'warn').mockImplementation(() => {});
+    writeSecret({ patterns: { EVIL: '(a+)+$' } });
+    // If the pattern were compiled and run, this input would hang the redactor.
+    const { text, counts } = redact('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!');
+    expect(text).toBe('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa!');
+    expect(counts.EVIL).toBeUndefined();
+    expect(warn).toHaveBeenCalled();
+    for (const call of warn.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain('(a+)+');
+    }
+    warn.mockRestore();
+  });
+
+  it('warns (rather than silently skipping) when the denylist exists but is unreadable', () => {
+    const warn = spyOn(logger, 'warn').mockImplementation(() => {});
+    const d = useDataDir();
+    // A directory at the denylist path makes readFileSync throw EISDIR — an
+    // existing-but-unreadable file must not be mistaken for "no denylist".
+    mkdirSync(join(d, 'redaction.local.json'));
+    const { text } = redact('hello world');
+    expect(text).toBe('hello world');
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

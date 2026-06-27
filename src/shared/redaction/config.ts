@@ -13,9 +13,55 @@ import { logger } from '../../utils/logger.js';
 /** Private denylist file, kept OUT of settings.json (and bug-report bundles). */
 const SECRET_LIST_FILE = 'redaction.local.json';
 
+/** Upper bound on an operator-supplied regex source (national-ID/secret patterns
+ *  are short); anything longer is rejected as a ReDoS / footgun risk. */
+const MAX_PATTERN_SOURCE_LENGTH = 200;
+
 /** Escape a literal string so it matches verbatim when used as a RegExp source. */
 function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Heuristic ReDoS guard for operator-supplied regex sources (locale patterns and
+ * the private denylist). These run on hot-path, partly attacker-influenced content
+ * (tool output, prompts), so a catastrophic pattern would hang the worker.
+ *
+ * Rejects (a) over-long sources and (b) nested unbounded quantifiers (star height
+ * >= 2) — the classic catastrophic shape, e.g. `(a+)+`, `(a*)*`, `(.+){2,}`. The
+ * built-in pattern table (patterns.ts) is exempt: it is reviewed and bounded.
+ */
+function isSafePatternSource(src: string): boolean {
+  if (src.length > MAX_PATTERN_SOURCE_LENGTH) return false;
+  // Strip escaped chars (\+, \(, \), \d, …) first so a LITERAL quantifier/paren
+  // isn't mistaken for a metacharacter. Then flag the catastrophic shape: a
+  // quantified GROUP combined with >=2 unbounded quantifiers overall, i.e. nested
+  // star height >= 2 (e.g. (a+)+, (a*)*, ((a+))+, (.+){2,}). Paren nesting is
+  // irrelevant to the counts, so deeply-nested groups can't slip past.
+  const cleaned = src.replace(/\\./g, '');
+  const quantifiedGroup = /\)(?:[*+]|\{\d+,\})/.test(cleaned);
+  const unboundedQuantifiers = (cleaned.match(/[*+]|\{\d+,\}/g) ?? []).length;
+  return !(quantifiedGroup && unboundedQuantifiers >= 2);
+}
+
+/**
+ * Compile an operator-supplied regex source into a Rule, or return null (with a
+ * warning) when the source is unsafe or uncompilable. The source is NEVER logged
+ * — for the private denylist it IS the secret, and even RegExp's own error
+ * message embeds the source. Only the (validated, UPPER_SNAKE) label is logged.
+ */
+function compileConfiguredRule(category: Category, label: string, src: string, origin: string): Rule | null {
+  if (!isSafePatternSource(src)) {
+    logger.warn('REDACT', `Ignoring ${origin} pattern — source too long or potential ReDoS`, { label });
+    return null;
+  }
+  try {
+    return { category, label, regex: new RegExp(src, 'g') };
+  } catch {
+    // Intentionally omit the Error: its message contains the raw pattern source.
+    logger.warn('REDACT', `Ignoring ${origin} pattern — invalid regular expression`, { label });
+    return null;
+  }
 }
 
 /**
@@ -30,15 +76,25 @@ function loadSecretRules(): Rule[] {
   let raw: string;
   try {
     raw = readFileSync(path.join(dataDir(), SECRET_LIST_FILE), 'utf-8');
-  } catch {
-    return []; // no private denylist configured
+  } catch (error) {
+    // ENOENT is the normal "no denylist configured" case. Any other error means
+    // the file EXISTS but couldn't be read (permissions, EISDIR, fd exhaustion):
+    // silently returning [] there would drop every operator secret with no signal,
+    // so surface it. Log only the error code — never path contents.
+    const code = (error as { code?: string }).code;
+    if (code !== 'ENOENT') {
+      logger.warn('REDACT', `Cannot read ${SECRET_LIST_FILE}; its denylist terms will NOT be redacted`, { code });
+    }
+    return [];
   }
 
   let parsed: { terms?: unknown; patterns?: unknown };
   try {
     parsed = JSON.parse(raw);
-  } catch (error) {
-    logger.warn('REDACT', `Ignoring ${SECRET_LIST_FILE} — invalid JSON`, {}, error as Error);
+  } catch {
+    // Omit the Error: a JSON parse message can echo a fragment of the file, which
+    // holds the operator's private terms.
+    logger.warn('REDACT', `Ignoring ${SECRET_LIST_FILE} — invalid JSON`, {});
     return [];
   }
 
@@ -61,11 +117,8 @@ function loadSecretRules(): Rule[] {
         continue;
       }
       if (typeof src !== 'string') continue;
-      try {
-        rules.push({ category: 'CUSTOM', label, regex: new RegExp(src, 'g') });
-      } catch (error) {
-        logger.warn('REDACT', `Ignoring invalid ${SECRET_LIST_FILE} pattern`, { label }, error as Error);
-      }
+      const rule = compileConfiguredRule('CUSTOM', label, src, SECRET_LIST_FILE);
+      if (rule) rules.push(rule);
     }
   }
 
@@ -96,10 +149,14 @@ function csv(v: string): string[] {
   return v.split(',').map((s) => s.trim()).filter(Boolean);
 }
 
-function parseJSON<T>(v: string, fallback: T): T {
+function parseJSON<T>(v: string, fallback: T, configName: string): T {
+  if (!v) return fallback; // unset config → fallback, no warning
   try {
     return JSON.parse(v) as T;
   } catch {
+    // Omit the raw value: the locale-patterns config can contain private regex
+    // sources. Name the setting so a misconfiguration is still discoverable.
+    logger.warn('REDACT', `Ignoring ${configName} — invalid JSON`, {});
     return fallback;
   }
 }
@@ -132,12 +189,19 @@ export function getPresidioConfig(): PresidioConfig {
     const n = parseInt(get(k), 10);
     return Number.isFinite(n) ? n : fallback;
   };
+  // Float-valued, and an explicit 0 (most-aggressive threshold) is meaningful, so
+  // guard the empty/invalid case directly rather than with `|| fallback`.
+  const float = (k: keyof SettingsDefaults, fallback: number) => {
+    const raw = get(k);
+    const n = Number(raw);
+    return raw !== '' && Number.isFinite(n) ? n : fallback;
+  };
   return {
     enabled: get('CLAUDE_MEM_REDACTION_PRESIDIO_ENABLED') === 'true',
     timeoutMs: num('CLAUDE_MEM_REDACTION_PRESIDIO_TIMEOUT_MS', 2000),
     startupTimeoutMs: num('CLAUDE_MEM_REDACTION_PRESIDIO_STARTUP_TIMEOUT_MS', 60000),
     entities: csv(get('CLAUDE_MEM_REDACTION_PRESIDIO_ENTITIES')),
-    scoreThreshold: Number(get('CLAUDE_MEM_REDACTION_PRESIDIO_SCORE_THRESHOLD')) || 0.5,
+    scoreThreshold: float('CLAUDE_MEM_REDACTION_PRESIDIO_SCORE_THRESHOLD', 0.5),
   };
 }
 
@@ -152,7 +216,8 @@ export function resolveRedactionConfig(project?: string): RedactionConfig {
 
   const overrides = parseJSON<Record<string, ProjectOverride>>(
     get('CLAUDE_MEM_REDACTION_PROJECT_OVERRIDES'),
-    {}
+    {},
+    'CLAUDE_MEM_REDACTION_PROJECT_OVERRIDES'
   );
   const o = project ? overrides[project] : undefined;
   if (o && typeof o === 'object') {
@@ -165,7 +230,8 @@ export function resolveRedactionConfig(project?: string): RedactionConfig {
 
   const localeMap = parseJSON<Record<string, string>>(
     get('CLAUDE_MEM_REDACTION_LOCALE_PATTERNS'),
-    {}
+    {},
+    'CLAUDE_MEM_REDACTION_LOCALE_PATTERNS'
   );
   const localePatterns: Rule[] = [];
   for (const [label, src] of Object.entries(localeMap)) {
@@ -179,13 +245,8 @@ export function resolveRedactionConfig(project?: string): RedactionConfig {
       logger.warn('REDACT', 'Ignoring configured locale pattern with non-string source', { label });
       continue;
     }
-    try {
-      localePatterns.push({ category: 'NATIONAL_ID', label, regex: new RegExp(src, 'g') });
-    } catch (error) {
-      // Skip an invalid configured regex rather than breaking the whole redactor
-      // — but never silently: the operator asked for this rule and it isn't running.
-      logger.warn('REDACT', 'Ignoring invalid configured locale redaction pattern', { label }, error as Error);
-    }
+    const rule = compileConfiguredRule('NATIONAL_ID', label, src, 'configured locale');
+    if (rule) localePatterns.push(rule);
   }
 
   localePatterns.push(...loadSecretRules());

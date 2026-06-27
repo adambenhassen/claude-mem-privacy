@@ -152,12 +152,22 @@ export async function processAgentResponse(
     agent_id: session.pendingAgentId ?? null
   }));
 
+  // Raw file paths captured BEFORE redaction: the folder-CLAUDE.md writer touches
+  // real files on disk, so it needs the actual paths, not the redacted copies.
+  const rawFilePaths: string[] = [];
+  for (const o of labeledObservations) {
+    if (Array.isArray(o.files_modified)) rawFilePaths.push(...o.files_modified);
+    if (Array.isArray(o.files_read)) rawFilePaths.push(...o.files_read);
+  }
+
   // Deep-redact (regex + Presidio NER) before persistence. For OpenAI-compatible
   // providers the LLM input was already deep-redacted upstream so this is largely
   // idempotent; for the Claude provider (no upstream deep pass) it's the only NER
-  // layer over generated content. Chroma redacts itself on sync.
+  // layer over generated content. Chroma redacts itself on sync. file paths are
+  // redacted too (home dirs / client names are PII) for every persisted/egress
+  // surface — the folder writer above keeps the raw paths.
   const safeObservations = await Promise.all(labeledObservations.map(o =>
-    redactFieldsDeep(o, ['title', 'subtitle', 'narrative', 'facts', 'concepts'], { project: session.project, surface: 'sqlite' })
+    redactFieldsDeep(o, ['title', 'subtitle', 'narrative', 'facts', 'concepts', 'files_read', 'files_modified'], { project: session.project, surface: 'sqlite' })
   ));
   const safeSummaryForStore = summaryForStore
     ? await redactFieldsDeep(summaryForStore, ['request', 'investigated', 'learned', 'completed', 'next_steps', 'notes'], { project: session.project, surface: 'sqlite' })
@@ -280,6 +290,7 @@ export async function processAgentResponse(
     dbManager,
     worker,
     agentName,
+    rawFilePaths,
     projectRoot
   );
 
@@ -322,6 +333,7 @@ async function syncAndBroadcastObservations(
   dbManager: DatabaseManager,
   worker: WorkerRef | undefined,
   agentName: string,
+  rawFilePaths: string[],
   projectRoot?: string
 ): Promise<void> {
   // Dedupe observation IDs before sync/broadcast: storeObservations may collapse
@@ -391,20 +403,21 @@ async function syncAndBroadcastObservations(
   const folderClaudeMdEnabled = settingValue === 'true' || settingValue === true;
 
   if (folderClaudeMdEnabled) {
-    const allFilePaths: string[] = [];
-    for (const obs of observations) {
-      allFilePaths.push(...(obs.files_modified || []));
-      allFilePaths.push(...(obs.files_read || []));
-    }
-
-    if (allFilePaths.length > 0) {
+    // Use the RAW paths (captured pre-redaction): this writes to real CLAUDE.md
+    // files, so redacted placeholder paths would point nowhere.
+    if (rawFilePaths.length > 0) {
       updateFolderClaudeMdFiles(
-        allFilePaths,
+        rawFilePaths,
         session.project,
         getWorkerPort(),
         projectRoot
       ).catch(error => {
-        logger.warn('FOLDER_INDEX', 'CLAUDE.md update failed (non-critical)', { project: session.project }, error as Error);
+        // Log the error CLASS only, never the Error itself: a filesystem error
+        // message embeds the raw file path, which can carry PII/secrets.
+        logger.warn('FOLDER_INDEX', 'CLAUDE.md update failed (non-critical)', {
+          project: session.project,
+          error: (error as Error)?.name,
+        });
       });
     }
   }

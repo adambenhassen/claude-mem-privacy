@@ -70,6 +70,71 @@ describe('resolveRedactionConfig', () => {
     s.mockRestore();
   });
 
+  it('warns (without echoing the raw value) when locale patterns JSON is malformed, and does not throw', () => {
+    const warn = spyOn(logger, 'warn').mockImplementation(() => {});
+    const s = withSettings({
+      CLAUDE_MEM_REDACTION_LOCALE_PATTERNS: '{ not valid json PRIVATE_PATTERN_XYZ',
+    });
+    const c = resolveRedactionConfig();
+    expect(c.localePatterns.length).toBe(0);
+    expect(warn).toHaveBeenCalled();
+    // The raw config value can contain private patterns — it must never be logged.
+    for (const call of warn.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain('PRIVATE_PATTERN_XYZ');
+    }
+    s.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('rejects a catastrophic (ReDoS) locale pattern without compiling or leaking its source', () => {
+    const warn = spyOn(logger, 'warn').mockImplementation(() => {});
+    const s = withSettings({
+      CLAUDE_MEM_REDACTION_LOCALE_PATTERNS: JSON.stringify({ EVIL_REDOS: '(a+)+$' }),
+    });
+    const c = resolveRedactionConfig();
+    expect(c.localePatterns.some((r) => r.label === 'EVIL_REDOS')).toBe(false);
+    expect(warn).toHaveBeenCalled();
+    for (const call of warn.mock.calls) {
+      expect(JSON.stringify(call)).not.toContain('(a+)+');
+    }
+    s.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('rejects a nested-group catastrophic pattern (e.g. ((a+))+) that single-level scanning would miss', () => {
+    const warn = spyOn(logger, 'warn').mockImplementation(() => {});
+    const s = withSettings({
+      CLAUDE_MEM_REDACTION_LOCALE_PATTERNS: JSON.stringify({ NESTED_REDOS: '((a+))+$' }),
+    });
+    const c = resolveRedactionConfig();
+    expect(c.localePatterns.some((r) => r.label === 'NESTED_REDOS')).toBe(false);
+    expect(warn).toHaveBeenCalled();
+    s.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('does NOT over-block a safe pattern whose group contains an ESCAPED quantifier char', () => {
+    // `(a\+)+` matches repeats of the literal "a+" — linear, not catastrophic.
+    const s = withSettings({
+      CLAUDE_MEM_REDACTION_LOCALE_PATTERNS: JSON.stringify({ LITERAL_PLUS: '(a\\+)+' }),
+    });
+    const c = resolveRedactionConfig();
+    expect(c.localePatterns.some((r) => r.label === 'LITERAL_PLUS')).toBe(true);
+    s.mockRestore();
+  });
+
+  it('rejects an over-long locale pattern source', () => {
+    const warn = spyOn(logger, 'warn').mockImplementation(() => {});
+    const s = withSettings({
+      CLAUDE_MEM_REDACTION_LOCALE_PATTERNS: JSON.stringify({ TOO_LONG: 'a'.repeat(1000) }),
+    });
+    const c = resolveRedactionConfig();
+    expect(c.localePatterns.some((r) => r.label === 'TOO_LONG')).toBe(false);
+    expect(warn).toHaveBeenCalled();
+    s.mockRestore();
+    warn.mockRestore();
+  });
+
   it('allowlists example.com and noreply by default', () => {
     expect(isEmailAllowed('x@example.com', [])).toBe(true);
     expect(isEmailAllowed('noreply@anything.io', [])).toBe(true);

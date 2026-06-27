@@ -8,6 +8,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { logger } from '../../utils/logger.js';
 import type { Rule } from './patterns.js';
 
 export interface OperatorIdentity {
@@ -17,6 +18,7 @@ export interface OperatorIdentity {
 }
 
 let cache: OperatorIdentity | null = null;
+let gitMissingWarned = false;
 
 function gitConfig(args: string[], cwd?: string): string {
   try {
@@ -26,7 +28,15 @@ function gitConfig(args: string[], cwd?: string): string {
       stdio: ['ignore', 'pipe', 'ignore'],
     });
     return typeof out === 'string' ? out.trim() : '';
-  } catch {
+  } catch (error) {
+    // A non-zero exit (an unset key) is the normal "no identity here" case. But
+    // ENOENT means git itself isn't on PATH — then operator self-redaction
+    // silently disables, which must be visible rather than indistinguishable from
+    // a legitimately-empty identity. Warn once per process.
+    if ((error as { code?: string }).code === 'ENOENT' && !gitMissingWarned) {
+      gitMissingWarned = true;
+      logger.warn('REDACT', 'git not found; operator self-redaction is disabled (cannot derive identity)', {});
+    }
     return '';
   }
 }
@@ -87,4 +97,5 @@ export function buildOperatorRules(id: OperatorIdentity = getOperatorIdentity())
 /** Test seam: clears the cached identity so a mocked git config takes effect. */
 export function __resetIdentityCache(): void {
   cache = null;
+  gitMissingWarned = false;
 }
