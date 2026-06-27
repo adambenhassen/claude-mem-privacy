@@ -20,6 +20,7 @@ export const CATEGORIES = [
   'NATIONAL_ID',
   'FINANCIAL',
   'GEO',
+  'CUSTOM',  // user-defined private denylist (redaction.local.json)
 ] as const;
 
 export type Category = (typeof CATEGORIES)[number];

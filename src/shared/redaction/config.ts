@@ -5,9 +5,72 @@
 
 import os from 'os';
 import path from 'path';
+import { readFileSync } from 'fs';
 import { SettingsDefaultsManager, type SettingsDefaults } from '../SettingsDefaultsManager.js';
 import { isCategory, type Category, type Rule } from './patterns.js';
 import { logger } from '../../utils/logger.js';
+
+/** Private denylist file, kept OUT of settings.json (and bug-report bundles). */
+const SECRET_LIST_FILE = 'redaction.local.json';
+
+/** Escape a literal string so it matches verbatim when used as a RegExp source. */
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Loads the operator's private denylist from ~/.claude-mem/redaction.local.json
+ * — a plain JSON file (NOT settings.json) so the sensitive terms never land in
+ * settings, bug reports, or casual config reads. Shape:
+ *   { "terms": ["literal", ...], "patterns": { "LABEL": "regexSource", ... } }
+ * Missing/invalid file is a silent no-op (never throws); all rules are CUSTOM
+ * category so they can be toggled via CLAUDE_MEM_REDACTION_DISABLED_CATEGORIES.
+ */
+function loadSecretRules(): Rule[] {
+  let raw: string;
+  try {
+    raw = readFileSync(path.join(dataDir(), SECRET_LIST_FILE), 'utf-8');
+  } catch {
+    return []; // no private denylist configured
+  }
+
+  let parsed: { terms?: unknown; patterns?: unknown };
+  try {
+    parsed = JSON.parse(raw);
+  } catch (error) {
+    logger.warn('REDACT', `Ignoring ${SECRET_LIST_FILE} — invalid JSON`, {}, error as Error);
+    return [];
+  }
+
+  const rules: Rule[] = [];
+
+  // Literal terms → escaped regex under a single CUSTOM label.
+  if (Array.isArray(parsed.terms)) {
+    for (const term of parsed.terms) {
+      if (typeof term === 'string' && term.length > 0) {
+        rules.push({ category: 'CUSTOM', label: 'CUSTOM', regex: new RegExp(escapeRegex(term), 'g') });
+      }
+    }
+  }
+
+  // Labeled regex patterns (UPPER_SNAKE label keeps the placeholder un-rematchable).
+  if (parsed.patterns && typeof parsed.patterns === 'object') {
+    for (const [label, src] of Object.entries(parsed.patterns as Record<string, unknown>)) {
+      if (!VALID_LABEL.test(label)) {
+        logger.warn('REDACT', `Ignoring ${SECRET_LIST_FILE} pattern with invalid label (must be UPPER_SNAKE)`, { label });
+        continue;
+      }
+      if (typeof src !== 'string') continue;
+      try {
+        rules.push({ category: 'CUSTOM', label, regex: new RegExp(src, 'g') });
+      } catch (error) {
+        logger.warn('REDACT', `Ignoring invalid ${SECRET_LIST_FILE} pattern`, { label }, error as Error);
+      }
+    }
+  }
+
+  return rules;
+}
 
 /** Placeholder labels must be UPPER_SNAKE so they can't be re-matched (idempotency). */
 const VALID_LABEL = /^[A-Z][A-Z0-9_]*$/;
@@ -124,6 +187,8 @@ export function resolveRedactionConfig(project?: string): RedactionConfig {
       logger.warn('REDACT', 'Ignoring invalid configured locale redaction pattern', { label }, error as Error);
     }
   }
+
+  localePatterns.push(...loadSecretRules());
 
   return { enabled, disabled, emailAllowlist, localePatterns };
 }
