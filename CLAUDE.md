@@ -2,6 +2,10 @@
 
 Claude-mem is a Claude Code plugin providing persistent memory across sessions. It captures tool usage, compresses observations using the Claude Agent SDK, and injects relevant context into future sessions.
 
+## Privacy — HARD RULE
+
+**NEVER read `~/.claude-mem/redaction.local.json`.** It is the operator's private redaction denylist and contains personal information; reading it would expose the very data it exists to hide. Do not open, `cat`, `grep`, `Read`, or otherwise access its contents — not even to verify, debug, or test. claude-mem reads it itself in-process; you never need to.
+
 ## Build
 
 ```bash
