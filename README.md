@@ -1,6 +1,6 @@
 <h1 align="center">
   <br>
-  <a href="https://github.com/thedotmack/claude-mem">
+  <a href="https://github.com/adambenhassen/claude-mem-privacy">
     <picture>
       <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/thedotmack/claude-mem/main/docs/public/claude-mem-logo-for-dark-mode.webp">
       <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/thedotmack/claude-mem/main/docs/public/claude-mem-logo-for-light-mode.webp">
@@ -126,11 +126,26 @@
   Claude-Mem seamlessly preserves context across sessions by automatically capturing tool usage observations, generating semantic summaries, and making them available to future sessions. This enables Claude to maintain continuity of knowledge about projects even after sessions end or reconnect.
 </p>
 
+> ### 🔒 About this fork
+>
+> **`claude-mem-privacy` is a privacy-hardened fork of [`thedotmack/claude-mem`](https://github.com/thedotmack/claude-mem).** It adds an **on-by-default redaction layer** that scrubs secrets and PII from every observation *before* it is stored in SQLite, indexed in Chroma, written to the queue or logs, or sent to any model for compression. The engine **fails closed**. Everything else tracks upstream.
+>
+> See **[Privacy & Redaction](#privacy--redaction)** for what it covers and how to configure it. All credit for claude-mem itself goes to [Alex Newman (@thedotmack)](https://github.com/thedotmack).
+
 ---
 
 ## Quick Start
 
-Install with a single command:
+> **Getting the redaction layer:** it ships **only in this fork**, which is not published to npm separately. The `npx claude-mem` / marketplace commands below install **stock claude-mem without redaction**. To get the privacy layer, install claude-mem normally (for the plugin + worker setup), then build this fork over it from source:
+>
+> ```bash
+> git clone https://github.com/adambenhassen/claude-mem-privacy
+> cd claude-mem-privacy
+> npm install
+> npm run build-and-sync   # builds, syncs to your local marketplace, restarts the worker
+> ```
+
+Install (upstream claude-mem) with a single command:
 
 ```bash
 npx claude-mem install
@@ -176,11 +191,40 @@ The installer handles dependencies, plugin setup, AI provider configuration, wor
 - 🔍 **Skill-Based Search** - Query your project history with mem-search skill
 - 🖥️ **Web Viewer UI** - Real-time memory stream at http://localhost:37777
 - 💻 **Claude Desktop Skill** - Search memory from Claude Desktop conversations
-- 🔒 **Privacy Control** - Use `<private>` tags to exclude sensitive content from storage
+- 🔒 **Redaction Layer (this fork)** - On-by-default PII/secret scrubbing across every surface, plus `<private>` tags to exclude content from storage entirely — see [Privacy & Redaction](#privacy--redaction)
 - ⚙️ **Context Configuration** - Fine-grained control over what context gets injected
 - 🤖 **Automatic Operation** - No manual intervention required
 - 🔗 **Citations** - Reference past observations with IDs (access via http://localhost:37777/api/observation/{id} or view all in the web viewer at http://localhost:37777)
 - 🧪 **Beta Channel** - Try experimental features like Endless Mode via version switching
+
+---
+
+## Privacy & Redaction
+
+This fork adds a redaction layer (**on by default**) that removes secrets and PII from observations **before** they reach any persistence or egress surface — SQLite, the Chroma vector index, the processing queue, worker logs, and the LLM compression calls themselves. The engine **fails closed**: if redaction errors, the value is dropped to `[REDACTED:ERROR]` rather than stored raw. Redaction logging is **count-only** — matched values are never written to logs.
+
+**What it covers (nine categories):** API keys & tokens, private keys, JWTs, basic-auth URLs (`SECRETS`) · emails (`EMAIL`) · the operator's own name/email/handle, derived read-only from `git config` (`OPERATOR`) · phone numbers (`PHONE`) · postal addresses (`POSTAL`) · national IDs / SSN / VAT (`NATIONAL_ID`) · credit cards (Luhn-checked), IBANs (mod-97), crypto addresses (`FINANCIAL`) · precise geo-coordinates (`GEO`) · and your own private terms (`CUSTOM`). Checksum validation keeps commit SHAs, documentation IPs, and version strings from being redacted by mistake.
+
+**Layers:**
+
+- **Regex core** — a reviewed, bounded (ReDoS-safe) pattern table, applied synchronously to every value.
+- **Operator self-redaction** — your git identity is always redacted, independent of the category toggles, so your own name/email never lands in stored memory.
+- **Private denylist** — drop your own literal terms or labeled regexes into `~/.claude-mem/redaction.local.json` (kept out of `settings.json` and bug-report bundles, ReDoS-guarded, reloaded on each call).
+- **Optional ML NER (Presidio)** — a Python sidecar adds free-form name/location detection. It **fails open** to the regex result and never blocks past its timeout.
+- **`<private>` tags** — wrap content to exclude it from storage entirely (inherited from upstream).
+
+**Configuration** — `~/.claude-mem/settings.json`:
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `CLAUDE_MEM_REDACTION_ENABLED` | `true` | Master switch |
+| `CLAUDE_MEM_REDACTION_DISABLED_CATEGORIES` | _(empty)_ | Comma-list of categories to turn off |
+| `CLAUDE_MEM_REDACTION_EMAIL_ALLOWLIST` | _(empty)_ | Emails/domains to keep unredacted |
+| `CLAUDE_MEM_REDACTION_LOCALE_PATTERNS` | `{}` | Extra national-ID regexes (`{ "LABEL": "source" }`) |
+| `CLAUDE_MEM_REDACTION_PROJECT_OVERRIDES` | `{}` | Per-project enable / disable / allowlist |
+| `CLAUDE_MEM_REDACTION_PRESIDIO_ENABLED` | `true` | Optional ML NER layer |
+| `CLAUDE_MEM_REDACTION_PRESIDIO_ENTITIES` | `PERSON,LOCATION` | NER entity types |
+| `CLAUDE_MEM_REDACTION_PRESIDIO_SCORE_THRESHOLD` | `0.5` | NER confidence cutoff |
 
 ---
 
@@ -404,12 +448,11 @@ open/commercial boundary.
 
 ## Support
 
-- **Documentation**: [docs/](docs/)
-- **Issues**: [GitHub Issues](https://github.com/thedotmack/claude-mem/issues)
-- **Repository**: [github.com/thedotmack/claude-mem](https://github.com/thedotmack/claude-mem)
-- **Official X Account**: [@Claude_Memory](https://x.com/Claude_Memory)
-- **Official Discord**: [Join Discord](https://discord.com/invite/J4wttp9vDu)
-- **Author**: Alex Newman ([@thedotmack](https://github.com/thedotmack))
+- **Documentation**: [docs/](docs/) (claude-mem docs at [docs.claude-mem.ai](https://docs.claude-mem.ai/))
+- **This fork — Issues**: [github.com/adambenhassen/claude-mem-privacy/issues](https://github.com/adambenhassen/claude-mem-privacy/issues)
+- **This fork — Repository**: [github.com/adambenhassen/claude-mem-privacy](https://github.com/adambenhassen/claude-mem-privacy)
+- **Upstream project**: [github.com/thedotmack/claude-mem](https://github.com/thedotmack/claude-mem) — community on [X](https://x.com/Claude_Memory) and [Discord](https://discord.com/invite/J4wttp9vDu)
+- **Credits**: claude-mem by Alex Newman ([@thedotmack](https://github.com/thedotmack)); privacy fork maintained by [@adambenhassen](https://github.com/adambenhassen)
 
 ---
 
