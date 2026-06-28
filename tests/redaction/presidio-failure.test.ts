@@ -3,6 +3,7 @@ import { SettingsDefaultsManager } from '../../src/shared/SettingsDefaultsManage
 import { PresidioManager } from '../../src/services/redaction/PresidioManager';
 import { redactTextDeep, __resetPresidioFailureWarning } from '../../src/shared/redaction/index';
 import { logger } from '../../src/utils/logger';
+import { logArgsText } from './leak-helpers';
 
 const PAT = 'ghp_' + '0'.repeat(36);
 
@@ -36,10 +37,16 @@ describe('Presidio pass failure (fail-open but observable)', () => {
     expect(out).toContain('[REDACTED:GITHUB_PAT]');
     expect(out).not.toContain(PAT);
     // The disappearance of the NER layer is surfaced...
-    expect(warn).toHaveBeenCalled();
-    // ...but neither the input text nor the error message leaks into the log.
+    expect(warn).toHaveBeenCalledTimes(1);
+    // ...but neither the input text nor the error message leaks into the log
+    // (Error-aware: a logged Error's .message would hide from JSON.stringify).
     for (const call of warn.mock.calls) {
-      expect(JSON.stringify(call)).not.toContain('SENSITIVE_INPUT_LEAK');
+      expect(logArgsText(call)).not.toContain('SENSITIVE_INPUT_LEAK');
     }
+
+    // Warn-once: a second failing pass on a new value must NOT log again, else a
+    // broken sidecar spams a line per field of every observation.
+    await redactTextDeep(`another SENSITIVE_INPUT_LEAK ${PAT}`, { surface: 'chroma' });
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 });

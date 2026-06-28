@@ -8,6 +8,14 @@ import { workerHttpRequest } from '../shared/worker-utils.js';
 import { paths } from '../shared/paths.js';
 import { matchesAnyGlob } from './project-filter.js';
 import { toBmpSafe } from './bmp-safe.js';
+import { redactText } from '../shared/redaction/index.js';
+
+/** Redact a value (folder path or error text) before it is logged: paths carry
+ *  PII (home dirs, client/project names), matching the redaction applied to the
+ *  observation file fields that feed this writer. */
+function safeForLog(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : redactText(value, { surface: 'log' });
+}
 
 const SETTINGS_PATH = paths.settings();
 
@@ -84,7 +92,7 @@ export function writeClaudeMdToFolder(folderPath: string, newContent: string, ta
   const tempFile = `${claudeMdPath}.tmp`;
 
   if (!existsSync(folderPath)) {
-    logger.debug('FOLDER_INDEX', 'Skipping non-existent folder', { folderPath });
+    logger.debug('FOLDER_INDEX', 'Skipping non-existent folder', { folderPath: safeForLog(folderPath) });
     return;
   }
 
@@ -270,7 +278,7 @@ export async function updateFolderClaudeMdFiles(
       }
       const folderPath = path.dirname(absoluteFilePath);
       foldersWithActiveClaudeMd.add(folderPath);
-      logger.debug('FOLDER_INDEX', 'Detected active context file, will skip folder', { folderPath, basename });
+      logger.debug('FOLDER_INDEX', 'Detected active context file, will skip folder', { folderPath: safeForLog(folderPath), basename });
     }
   }
 
@@ -291,19 +299,19 @@ export async function updateFolderClaudeMdFiles(
     const folderPath = path.dirname(absoluteFilePath);
     if (folderPath && folderPath !== '.' && folderPath !== '/') {
       if (isProjectRoot(folderPath)) {
-        logger.debug('FOLDER_INDEX', 'Skipping project root CLAUDE.md', { folderPath });
+        logger.debug('FOLDER_INDEX', 'Skipping project root CLAUDE.md', { folderPath: safeForLog(folderPath) });
         continue;
       }
       if (isExcludedUnsafeDirectory(folderPath)) {
-        logger.debug('FOLDER_INDEX', 'Skipping unsafe directory for CLAUDE.md', { folderPath });
+        logger.debug('FOLDER_INDEX', 'Skipping unsafe directory for CLAUDE.md', { folderPath: safeForLog(folderPath) });
         continue;
       }
       if (foldersWithActiveClaudeMd.has(folderPath)) {
-        logger.debug('FOLDER_INDEX', 'Skipping folder with active CLAUDE.md to avoid race condition', { folderPath });
+        logger.debug('FOLDER_INDEX', 'Skipping folder with active CLAUDE.md to avoid race condition', { folderPath: safeForLog(folderPath) });
         continue;
       }
       if (folderMdExcludePaths.length > 0 && isExcludedFolder(folderPath, folderMdExcludePaths)) {
-        logger.debug('FOLDER_INDEX', 'Skipping excluded folder', { folderPath });
+        logger.debug('FOLDER_INDEX', 'Skipping excluded folder', { folderPath: safeForLog(folderPath) });
         continue;
       }
       folderPaths.add(folderPath);
@@ -327,21 +335,21 @@ export async function updateFolderClaudeMdFiles(
       const message = error instanceof Error ? error.message : String(error);
       const stack = error instanceof Error ? error.stack : undefined;
       logger.error('FOLDER_INDEX', `Failed to fetch timeline for ${targetFilename}`, {
-        folderPath,
-        errorMessage: message,
-        errorStack: stack
+        folderPath: safeForLog(folderPath),
+        errorMessage: safeForLog(message),
+        errorStack: safeForLog(stack)
       });
       continue;
     }
 
     if (!response.ok) {
-      logger.error('FOLDER_INDEX', 'Failed to fetch timeline', { folderPath, status: response.status });
+      logger.error('FOLDER_INDEX', 'Failed to fetch timeline', { folderPath: safeForLog(folderPath), status: response.status });
       continue;
     }
 
     const result = await response.json() as { content?: Array<{ text?: string }> };
     if (!result.content?.[0]?.text) {
-      logger.debug('FOLDER_INDEX', 'No content for folder', { folderPath });
+      logger.debug('FOLDER_INDEX', 'No content for folder', { folderPath: safeForLog(folderPath) });
       continue;
     }
 
@@ -356,17 +364,17 @@ export async function updateFolderClaudeMdFiles(
     // matches the user's deny-list, never inject (skip even if the file exists,
     // so we don't pollute non-content dirs with empty skeletons).
     if (isEmptyOrSkeleton && matchesAnyGlob(folderPath, skeletonDenylistPatterns)) {
-      logger.debug('FOLDER_INDEX', 'Skipping skeleton CLAUDE.md in deny-listed folder', { folderPath, targetFilename });
+      logger.debug('FOLDER_INDEX', 'Skipping skeleton CLAUDE.md in deny-listed folder', { folderPath: safeForLog(folderPath), targetFilename });
       continue;
     }
 
     if (hasNoActivity && !fileExists) {
-      logger.debug('FOLDER_INDEX', 'Skipping empty context file creation', { folderPath, targetFilename });
+      logger.debug('FOLDER_INDEX', 'Skipping empty context file creation', { folderPath: safeForLog(folderPath), targetFilename });
       continue;
     }
 
     writeClaudeMdToFolder(folderPath, formatted, targetFilename);
 
-    logger.debug('FOLDER_INDEX', 'Updated context file', { folderPath, targetFilename });
+    logger.debug('FOLDER_INDEX', 'Updated context file', { folderPath: safeForLog(folderPath), targetFilename });
   }
 }

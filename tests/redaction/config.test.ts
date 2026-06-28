@@ -2,6 +2,7 @@ import { describe, it, expect, spyOn } from 'bun:test';
 import { SettingsDefaultsManager } from '../../src/shared/SettingsDefaultsManager';
 import { resolveRedactionConfig, isEmailAllowed } from '../../src/shared/redaction/config';
 import { logger } from '../../src/utils/logger';
+import { logArgsText } from './leak-helpers';
 
 function withSettings(over: Record<string, string>) {
   return spyOn(SettingsDefaultsManager, 'loadFromFile').mockImplementation(
@@ -78,9 +79,10 @@ describe('resolveRedactionConfig', () => {
     const c = resolveRedactionConfig();
     expect(c.localePatterns.length).toBe(0);
     expect(warn).toHaveBeenCalled();
-    // The raw config value can contain private patterns — it must never be logged.
+    // The raw config value can contain private patterns — it must never be logged
+    // (Error-aware: a leak via a logged Error would hide in non-enumerable .message).
     for (const call of warn.mock.calls) {
-      expect(JSON.stringify(call)).not.toContain('PRIVATE_PATTERN_XYZ');
+      expect(logArgsText(call)).not.toContain('PRIVATE_PATTERN_XYZ');
     }
     s.mockRestore();
     warn.mockRestore();
@@ -95,10 +97,44 @@ describe('resolveRedactionConfig', () => {
     expect(c.localePatterns.some((r) => r.label === 'EVIL_REDOS')).toBe(false);
     expect(warn).toHaveBeenCalled();
     for (const call of warn.mock.calls) {
-      expect(JSON.stringify(call)).not.toContain('(a+)+');
+      expect(logArgsText(call)).not.toContain('(a+)+');
     }
     s.mockRestore();
     warn.mockRestore();
+  });
+
+  it('rejects a {n,}-brace nested quantifier (e.g. (.+){2,})', () => {
+    const warn = spyOn(logger, 'warn').mockImplementation(() => {});
+    const s = withSettings({
+      CLAUDE_MEM_REDACTION_LOCALE_PATTERNS: JSON.stringify({ BRACE_REDOS: '(.+){2,}' }),
+    });
+    const c = resolveRedactionConfig();
+    expect(c.localePatterns.some((r) => r.label === 'BRACE_REDOS')).toBe(false);
+    expect(warn).toHaveBeenCalled();
+    s.mockRestore();
+    warn.mockRestore();
+  });
+
+  it('does NOT over-block a safe UN-nested pattern that merely has two quantifiers', () => {
+    // `(abc)+\d{2,}` is linear — a quantified group followed by an independent
+    // quantifier, NOT a quantifier nested inside the quantified group.
+    const s = withSettings({
+      CLAUDE_MEM_REDACTION_LOCALE_PATTERNS: JSON.stringify({ SAFE_TWO_QUANT: '(abc)+\\d{2,}' }),
+    });
+    const c = resolveRedactionConfig();
+    expect(c.localePatterns.some((r) => r.label === 'SAFE_TWO_QUANT')).toBe(true);
+    s.mockRestore();
+  });
+
+  it('does NOT count quantifier chars inside a character class (e.g. ([+*])+)', () => {
+    // The `+`/`*` live inside a character class as literals; the only real
+    // quantifier is the outer `+`, so this is safe and must not be dropped.
+    const s = withSettings({
+      CLAUDE_MEM_REDACTION_LOCALE_PATTERNS: JSON.stringify({ CLASS_QUANT: '([+*])+' }),
+    });
+    const c = resolveRedactionConfig();
+    expect(c.localePatterns.some((r) => r.label === 'CLASS_QUANT')).toBe(true);
+    s.mockRestore();
   });
 
   it('rejects a nested-group catastrophic pattern (e.g. ((a+))+) that single-level scanning would miss', () => {

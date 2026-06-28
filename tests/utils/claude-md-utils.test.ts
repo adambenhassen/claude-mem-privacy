@@ -13,12 +13,13 @@ import * as realWorkerUtils from '../../src/shared/worker-utils.js';
 const realLoggerSnapshot = { ...realLogger };
 const realWorkerUtilsSnapshot = { ...realWorkerUtils };
 
+const loggerErrorCalls: unknown[][] = [];
 mock.module('../../src/utils/logger.js', () => ({
   logger: {
     info: () => {},
     debug: () => {},
     warn: () => {},
-    error: () => {},
+    error: (...args: unknown[]) => { loggerErrorCalls.push(args); },
     formatTool: (toolName: string, toolInput?: any) => toolInput ? `${toolName}(...)` : toolName,
   },
 }));
@@ -373,6 +374,22 @@ describe('updateFolderClaudeMdFiles', () => {
 
     const claudeMdPath = join(folderPath, 'CLAUDE.md');
     expect(existsSync(claudeMdPath)).toBe(false);
+  });
+
+  it('redacts the folder path and error details before logging a timeline-fetch failure', async () => {
+    loggerErrorCalls.length = 0;
+    const TOKEN = 'ghp_' + '0'.repeat(36);
+    // The folder path itself carries PII (here a secret token); the forced error
+    // message embeds it too, the way a real filesystem/network error would.
+    const filePath = join(tempDir, TOKEN, 'src', 'test.ts');
+    global.fetch = mock(() => Promise.reject(new Error(`ECONNREFUSED for ${filePath}`)));
+
+    await updateFolderClaudeMdFiles([filePath], 'test-project', 37777);
+
+    expect(loggerErrorCalls.length).toBeGreaterThan(0); // the error path was exercised
+    for (const call of loggerErrorCalls) {
+      expect(JSON.stringify(call)).not.toContain(TOKEN);
+    }
   });
 
   it('should resolve relative paths using projectRoot', async () => {

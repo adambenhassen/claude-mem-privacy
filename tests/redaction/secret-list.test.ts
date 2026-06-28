@@ -4,6 +4,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { redact } from '../../src/shared/redaction/redactor';
 import { logger } from '../../src/utils/logger';
+import { logArgsText } from './leak-helpers';
 
 let prevDataDir: string | undefined;
 let dir: string | undefined;
@@ -60,10 +61,14 @@ describe('private secret denylist (redaction.local.json)', () => {
     expect(text).toContain('[REDACTED:GOOD]');    // valid label applied
   });
 
-  it('is a no-op when the file is absent', () => {
+  it('is a no-op when the file is absent — and stays silent (ENOENT is the normal case)', () => {
+    const warn = spyOn(logger, 'warn').mockImplementation(() => {});
     useDataDir();
     const { text } = redact('nothing custom here');
     expect(text).toBe('nothing custom here');
+    // A regression that warned on ENOENT would log on every normal run.
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
   it('is a no-op (and does not throw) when the denylist JSON is malformed, without echoing its contents', () => {
@@ -74,7 +79,20 @@ describe('private secret denylist (redaction.local.json)', () => {
     expect(warn).toHaveBeenCalled();
     // The malformed file holds private terms — its contents must never reach the logs.
     for (const call of warn.mock.calls) {
-      expect(JSON.stringify(call)).not.toContain('PRIVATE_TERM_ABC');
+      expect(logArgsText(call)).not.toContain('PRIVATE_TERM_ABC');
+    }
+    warn.mockRestore();
+  });
+
+  it('does not log the raw (unvalidated) denylist label, which can itself be private', () => {
+    const warn = spyOn(logger, 'warn').mockImplementation(() => {});
+    // A non-UPPER_SNAKE key is rejected — but the key text ("acme-client-badge")
+    // is operator-private and must not ride into the logs.
+    writeSecret({ patterns: { 'acme-client-badge': 'X-[0-9]{4}' } });
+    redact('some text');
+    expect(warn).toHaveBeenCalled();
+    for (const call of warn.mock.calls) {
+      expect(logArgsText(call)).not.toContain('acme-client-badge');
     }
     warn.mockRestore();
   });
@@ -86,7 +104,7 @@ describe('private secret denylist (redaction.local.json)', () => {
     expect(text).toBe('some ordinary text'); // invalid pattern dropped, no crash
     expect(warn).toHaveBeenCalled();
     for (const call of warn.mock.calls) {
-      expect(JSON.stringify(call)).not.toContain('unclosed_group_PRIVATESRC');
+      expect(logArgsText(call)).not.toContain('unclosed_group_PRIVATESRC');
     }
     warn.mockRestore();
   });
@@ -100,7 +118,7 @@ describe('private secret denylist (redaction.local.json)', () => {
     expect(counts.EVIL).toBeUndefined();
     expect(warn).toHaveBeenCalled();
     for (const call of warn.mock.calls) {
-      expect(JSON.stringify(call)).not.toContain('(a+)+');
+      expect(logArgsText(call)).not.toContain('(a+)+');
     }
     warn.mockRestore();
   });
@@ -114,6 +132,10 @@ describe('private secret denylist (redaction.local.json)', () => {
     const { text } = redact('hello world');
     expect(text).toBe('hello world');
     expect(warn).toHaveBeenCalled();
+    // The warning may name the file but must never include the data-dir path.
+    for (const call of warn.mock.calls) {
+      expect(logArgsText(call)).not.toContain(d);
+    }
     warn.mockRestore();
   });
 });

@@ -29,13 +29,16 @@ function gitConfig(args: string[], cwd?: string): string {
     });
     return typeof out === 'string' ? out.trim() : '';
   } catch (error) {
-    // A non-zero exit (an unset key) is the normal "no identity here" case. But
-    // ENOENT means git itself isn't on PATH — then operator self-redaction
-    // silently disables, which must be visible rather than indistinguishable from
-    // a legitimately-empty identity. Warn once per process.
-    if ((error as { code?: string }).code === 'ENOENT' && !gitMissingWarned) {
+    // A non-zero EXIT (an unset key) is the normal "no identity here" case and has
+    // a numeric `status`. A SPAWN-level failure (git missing/not executable —
+    // ENOENT, EACCES, …) sets an errno `code` and no `status`; there git couldn't
+    // run at all, so operator self-redaction silently disables. Surface that once,
+    // logging only the errno code (never a path), rather than letting it look like
+    // a legitimately-empty identity.
+    const e = error as { code?: string; status?: number | null };
+    if (e.code && e.status == null && !gitMissingWarned) {
       gitMissingWarned = true;
-      logger.warn('REDACT', 'git not found; operator self-redaction is disabled (cannot derive identity)', {});
+      logger.warn('REDACT', 'git unavailable; operator self-redaction is disabled (cannot derive identity)', { code: e.code });
     }
     return '';
   }

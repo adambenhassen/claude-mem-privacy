@@ -632,9 +632,12 @@ describe('ResponseProcessor', () => {
       expect(JSON.stringify(observations[0].files_modified)).not.toContain(TOKEN);
       expect(JSON.stringify(observations[0].files_read)).toContain('[REDACTED:GITHUB_PAT]');
 
-      // The SSE broadcast must carry the redacted paths too.
+      // The SSE broadcast must carry the redacted paths too. files_modified is an
+      // array, so stringify before substring-checking (element equality would
+      // never match the bare token and pass vacuously).
       const obsCall = mockBroadcast.mock.calls.find((c: any[]) => c[0].type === 'new_observation');
-      expect(obsCall[0].observation.files_modified).not.toContain(TOKEN);
+      expect(JSON.stringify(obsCall[0].observation.files_modified)).not.toContain(TOKEN);
+      expect(JSON.stringify(obsCall[0].observation.files_modified)).toContain('[REDACTED:GITHUB_PAT]');
 
       s.mockRestore();
     });

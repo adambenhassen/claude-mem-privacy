@@ -22,26 +22,58 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** Whether `s` at index `i` begins an unbounded quantifier (`*`, `+`, or `{n,}`). */
+function unboundedQuantifierAt(s: string, i: number): boolean {
+  const c = s[i];
+  if (c === '*' || c === '+') return true;
+  return c === '{' && /^\{\d+,\}/.test(s.slice(i));
+}
+
 /**
  * Heuristic ReDoS guard for operator-supplied regex sources (locale patterns and
  * the private denylist). These run on hot-path, partly attacker-influenced content
  * (tool output, prompts), so a catastrophic pattern would hang the worker.
  *
- * Rejects (a) over-long sources and (b) nested unbounded quantifiers (star height
- * >= 2) — the classic catastrophic shape, e.g. `(a+)+`, `(a*)*`, `(.+){2,}`. The
- * built-in pattern table (patterns.ts) is exempt: it is reviewed and bounded.
+ * Rejects (a) over-long sources and (b) NESTED unbounded quantifiers (star height
+ * >= 2) — a group that is unbounded-quantified AND whose body (at any paren depth)
+ * also contains an unbounded quantifier, e.g. `(a+)+`, `(a*)*`, `((a+))+`,
+ * `(.+){2,}`. An un-nested second quantifier (`(abc)+\d{2,}`) is linear and stays
+ * allowed; quantifier chars inside a character class (`([+*])+`) are literals.
+ *
+ * SCOPE: this targets only nested-quantifier ReDoS. Alternation-overlap forms like
+ * `(a|a)+` are NOT detected (they have star height 1) — operator config is trusted
+ * input, so this is defense-in-depth, not a sandbox. The built-in pattern table
+ * (patterns.ts) is exempt: it is reviewed and bounded.
  */
 function isSafePatternSource(src: string): boolean {
   if (src.length > MAX_PATTERN_SOURCE_LENGTH) return false;
-  // Strip escaped chars (\+, \(, \), \d, …) first so a LITERAL quantifier/paren
-  // isn't mistaken for a metacharacter. Then flag the catastrophic shape: a
-  // quantified GROUP combined with >=2 unbounded quantifiers overall, i.e. nested
-  // star height >= 2 (e.g. (a+)+, (a*)*, ((a+))+, (.+){2,}). Paren nesting is
-  // irrelevant to the counts, so deeply-nested groups can't slip past.
-  const cleaned = src.replace(/\\./g, '');
-  const quantifiedGroup = /\)(?:[*+]|\{\d+,\})/.test(cleaned);
-  const unboundedQuantifiers = (cleaned.match(/[*+]|\{\d+,\}/g) ?? []).length;
-  return !(quantifiedGroup && unboundedQuantifiers >= 2);
+  // Drop escaped chars (\+, \(, …) and character-class contents ([+*]) so literal
+  // metacharacters aren't mistaken for quantifiers/groups.
+  const cleaned = src.replace(/\\./g, '').replace(/\[[^\]]*\]/g, '');
+
+  // Walk the groups; for each, track whether its body contains an unbounded
+  // quantifier (transitively, so an inner group's quantifier counts for its
+  // parents). A group that is itself unbounded-quantified AND whose body already
+  // had one is the catastrophic nested shape.
+  const bodyHasUnbounded: boolean[] = [];
+  for (let i = 0; i < cleaned.length; i++) {
+    const c = cleaned[i];
+    if (c === '(') {
+      bodyHasUnbounded.push(false);
+    } else if (c === ')') {
+      const inner = bodyHasUnbounded.pop() ?? false;
+      const quantified = unboundedQuantifierAt(cleaned, i + 1);
+      if (quantified && inner) return false;
+      // Propagate up: a quantifier somewhere inside, or the group's own quantifier,
+      // means the PARENT's body contains an unbounded quantifier too.
+      if (bodyHasUnbounded.length > 0 && (inner || quantified)) {
+        bodyHasUnbounded[bodyHasUnbounded.length - 1] = true;
+      }
+    } else if (unboundedQuantifierAt(cleaned, i) && bodyHasUnbounded.length > 0) {
+      bodyHasUnbounded[bodyHasUnbounded.length - 1] = true;
+    }
+  }
+  return true;
 }
 
 /**
@@ -113,7 +145,10 @@ function loadSecretRules(): Rule[] {
   if (parsed.patterns && typeof parsed.patterns === 'object') {
     for (const [label, src] of Object.entries(parsed.patterns as Record<string, unknown>)) {
       if (!VALID_LABEL.test(label)) {
-        logger.warn('REDACT', `Ignoring ${SECRET_LIST_FILE} pattern with invalid label (must be UPPER_SNAKE)`, { label });
+        // The raw key is unvalidated operator input from the PRIVATE denylist and
+        // could itself be sensitive — name the rule (rejected, must be UPPER_SNAKE)
+        // without echoing the key.
+        logger.warn('REDACT', `Ignoring a ${SECRET_LIST_FILE} pattern with a non-UPPER_SNAKE label`, {});
         continue;
       }
       if (typeof src !== 'string') continue;
