@@ -128,7 +128,13 @@
 
 > ### 🔒 About this fork
 >
-> **`claude-mem-privacy` is a privacy-hardened fork of [`thedotmack/claude-mem`](https://github.com/thedotmack/claude-mem).** It adds an **on-by-default redaction layer** that scrubs secrets and PII from every observation *before* it is stored in SQLite, indexed in Chroma, written to the queue or logs, or sent to any model for compression. The engine **fails closed**. Everything else tracks upstream.
+> **`claude-mem-privacy` is a privacy-hardened fork of [`thedotmack/claude-mem`](https://github.com/thedotmack/claude-mem).** On top of upstream it adds:
+>
+> - 🔒 an **on-by-default redaction layer** that scrubs secrets and PII from every observation *before* it is stored in SQLite, indexed in Chroma, written to the queue or logs, or sent to any model for compression (the engine **fails closed**) — see [Privacy & Redaction](#privacy--redaction);
+> - 🔌 a **custom OpenAI-compatible provider** so compression can run against any OpenAI-style endpoint (including local/self-hosted models) — see [Custom AI Provider](#custom-ai-provider);
+> - 🎯 a **project allow-list with SessionStart gating** so memory is only captured/injected for the projects you choose — see [Project Allow-list](#project-allow-list).
+>
+> Everything else tracks upstream.
 >
 > See **[Privacy & Redaction](#privacy--redaction)** for what it covers and how to configure it. All credit for claude-mem itself goes to [Alex Newman (@thedotmack)](https://github.com/thedotmack).
 
@@ -192,6 +198,8 @@ The installer handles dependencies, plugin setup, AI provider configuration, wor
 - 🖥️ **Web Viewer UI** - Real-time memory stream at http://localhost:37777
 - 💻 **Claude Desktop Skill** - Search memory from Claude Desktop conversations
 - 🔒 **Redaction Layer (this fork)** - On-by-default PII/secret scrubbing across every surface, plus `<private>` tags to exclude content from storage entirely — see [Privacy & Redaction](#privacy--redaction)
+- 🔌 **Custom AI Provider (this fork)** - Run compression against any OpenAI-compatible endpoint, including local/self-hosted models — see [Custom AI Provider](#custom-ai-provider)
+- 🎯 **Project Allow-list (this fork)** - Capture and inject memory only for the projects you opt in (glob allow/deny) — see [Project Allow-list](#project-allow-list)
 - ⚙️ **Context Configuration** - Fine-grained control over what context gets injected
 - 🤖 **Automatic Operation** - No manual intervention required
 - 🔗 **Citations** - Reference past observations with IDs (access via http://localhost:37777/api/observation/{id} or view all in the web viewer at http://localhost:37777)
@@ -351,6 +359,44 @@ Make sure Node.js and npm are installed and added to your PATH. Download the lat
 Settings are managed in `~/.claude-mem/settings.json` (auto-created with defaults on first run). Configure AI model, worker port, data directory, log level, and context injection settings.
 
 See the **[Configuration Guide](https://docs.claude-mem.ai/configuration)** for all available settings and examples.
+
+### Custom AI Provider
+
+By default, claude-mem compresses with Claude. This fork adds a first-class **custom OpenAI-compatible provider**, so you can point compression at any OpenAI-style `/v1/chat/completions` endpoint — a local server (vLLM, llama.cpp, Ollama's OpenAI shim, LM Studio), an internal gateway, or any hosted OpenAI-compatible API.
+
+Set `CLAUDE_MEM_PROVIDER` to `custom` and configure the endpoint in `~/.claude-mem/settings.json`:
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `CLAUDE_MEM_PROVIDER` | `claude` | Compression backend: `claude`, `gemini`, `openrouter`, or `custom` |
+| `CLAUDE_MEM_CUSTOM_BASE_URL` | _(empty)_ | OpenAI-compatible base URL, e.g. `http://localhost:8000/v1` |
+| `CLAUDE_MEM_CUSTOM_API_KEY` | _(empty)_ | API key (optional — local endpoints may be keyless) |
+| `CLAUDE_MEM_CUSTOM_MODEL` | _(empty)_ | Model id, passed verbatim (e.g. `openai/gpt-4o-mini`) |
+
+```json
+{
+  "CLAUDE_MEM_PROVIDER": "custom",
+  "CLAUDE_MEM_CUSTOM_BASE_URL": "http://localhost:8000/v1",
+  "CLAUDE_MEM_CUSTOM_MODEL": "openai/gpt-4o-mini"
+}
+```
+
+> All prompts sent to a custom (often third-party or shared) endpoint pass through the [redaction layer](#privacy--redaction) first.
+
+### Project Allow-list
+
+By default claude-mem tracks every project. This fork adds opt-in **project gating**: when `CLAUDE_MEM_ALLOWED_PROJECTS` is non-empty, only matching project paths are captured **and** SessionStart context injection is gated to those projects. `CLAUDE_MEM_EXCLUDED_PROJECTS` always takes precedence.
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `CLAUDE_MEM_ALLOWED_PROJECTS` | _(empty)_ | Comma-separated glob patterns; when non-empty, only matching project paths are tracked/injected |
+| `CLAUDE_MEM_EXCLUDED_PROJECTS` | _(empty)_ | Comma-separated glob patterns for project paths to exclude |
+
+```json
+{
+  "CLAUDE_MEM_ALLOWED_PROJECTS": "~/work/**,~/repos/myapp"
+}
+```
 
 ### Mode & Language Configuration
 
