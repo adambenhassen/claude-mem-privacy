@@ -37,6 +37,21 @@ describe('STATIC_RULES secrets', () => {
     expect(redactWith('-----BEGIN OPENSSH PRIVATE KEY-----')).toContain('[REDACTED:PRIVATE_KEY]');
   });
 
+  it('redacts ssh public keys (rsa, ed25519, ecdsa, FIDO security-key)', () => {
+    const body = 'AAAA' + 'B'.repeat(40);
+    for (const type of [
+      'ssh-rsa',
+      'ssh-ed25519',
+      'ecdsa-sha2-nistp256',
+      'sk-ssh-ed25519@openssh.com',
+      'sk-ecdsa-sha2-nistp256@openssh.com',
+    ]) {
+      const out = redactWith(`${type} ${body} user@host`);
+      expect(out).toContain('[REDACTED:SSH_KEY]');
+      expect(out).not.toContain(body);
+    }
+  });
+
   it('does NOT redact env-var names or placeholders', () => {
     expect(redactWith('DATABASE_PASSWORD')).toBe('DATABASE_PASSWORD');
     expect(redactWith('api_key = YOUR_API_KEY')).toBe('api_key = YOUR_API_KEY');

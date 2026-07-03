@@ -135,7 +135,8 @@ export const STATIC_RULES: Rule[] = [
   {
     category: 'SECRETS',
     label: 'SSH_KEY',
-    regex: /\bssh-(?:rsa|ed25519|dss)\s+AAAA[A-Za-z0-9+/=]{20,}/g,
+    // rsa/ed25519/dss + ecdsa-sha2-nistp* + FIDO security-key (sk-*@openssh.com) types
+    regex: /\b(?:ssh-(?:rsa|ed25519|dss)|ecdsa-sha2-nistp(?:256|384|521)|sk-(?:ssh-ed25519|ecdsa-sha2-nistp256)@openssh\.com)\s+AAAA[A-Za-z0-9+/=]{20,}/g,
   },
 
   // --- JWT before generic key rules ---
