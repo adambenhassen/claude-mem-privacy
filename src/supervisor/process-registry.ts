@@ -595,6 +595,15 @@ export function spawnSdkProcess(
 
   const useCmdWrapper = process.platform === 'win32' && options.command.endsWith('.cmd');
   const env = sanitizeEnv(options.env ?? process.env);
+  // Deliberate effort opt-in: ClaudeProvider sets CLAUDE_MEM_EFFORT_LEVEL
+  // (our namespace, survives sanitizeEnv) from the user setting; translate it
+  // here at the spawn boundary. Host CLAUDE_CODE_EFFORT_LEVEL leaks (#2357)
+  // are still stripped above.
+  const effort = env.CLAUDE_MEM_EFFORT_LEVEL;
+  delete env.CLAUDE_MEM_EFFORT_LEVEL;
+  if (effort === 'low' || effort === 'medium' || effort === 'high') {
+    env.CLAUDE_CODE_EFFORT_LEVEL = effort;
+  }
 
   const filteredArgs: string[] = [];
   for (const arg of options.args) {

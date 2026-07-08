@@ -79,6 +79,7 @@ export class SettingsRoutes extends BaseRouteHandler {
 
     const settingKeys = [
       'CLAUDE_MEM_MODEL',
+      'CLAUDE_MEM_EFFORT_LEVEL',
       'CLAUDE_MEM_CONTEXT_OBSERVATIONS',
       'CLAUDE_MEM_WORKER_PORT',
       'CLAUDE_MEM_WORKER_HOST',
@@ -190,6 +191,9 @@ export class SettingsRoutes extends BaseRouteHandler {
   });
 
   private validateSettings(settings: any): { valid: boolean; error?: string } {
+    if (settings.CLAUDE_MEM_EFFORT_LEVEL && !['low', 'medium', 'high'].includes(settings.CLAUDE_MEM_EFFORT_LEVEL)) {
+      return { valid: false, error: 'CLAUDE_MEM_EFFORT_LEVEL must be "low", "medium", "high", or empty' };
+    }
     if (settings.CLAUDE_MEM_PROVIDER) {
     const validProviders = ['claude', 'gemini', 'openrouter', 'custom'];
     if (!validProviders.includes(settings.CLAUDE_MEM_PROVIDER)) {
@@ -217,6 +221,9 @@ export class SettingsRoutes extends BaseRouteHandler {
         }
         if (typeof entry === 'object' && entry !== null && 'model' in entry && typeof (entry as Record<string, unknown>).model !== 'string') {
           return { valid: false, error: `CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES["${project}"].model must be a string` };
+        }
+        if (typeof entry === 'object' && entry !== null && 'effort' in entry && !['low', 'medium', 'high'].includes(String((entry as Record<string, unknown>).effort))) {
+          return { valid: false, error: `CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES["${project}"].effort must be "low", "medium", or "high"` };
         }
       }
     }
@@ -322,8 +329,10 @@ export class SettingsRoutes extends BaseRouteHandler {
 
     if (settings.CLAUDE_MEM_OPENROUTER_MAX_CONTEXT_MESSAGES) {
       const count = parseInt(settings.CLAUDE_MEM_OPENROUTER_MAX_CONTEXT_MESSAGES, 10);
-      if (isNaN(count) || count < 1 || count > 100) {
-        return { valid: false, error: 'CLAUDE_MEM_OPENROUTER_MAX_CONTEXT_MESSAGES must be between 1 and 100' };
+      // Truncation count only — the provider imposes no upper bound, so allow
+      // the values the runtime already honors (values like 200 are in use).
+      if (isNaN(count) || count < 1 || count > 1000) {
+        return { valid: false, error: 'CLAUDE_MEM_OPENROUTER_MAX_CONTEXT_MESSAGES must be between 1 and 1000' };
       }
     }
 

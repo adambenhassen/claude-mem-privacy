@@ -22,6 +22,15 @@ describe('resolveProviderOverride', () => {
     expect(resolveProviderOverride('a', '{"a":{"provider":"custom","model":"  "}}')).toEqual({ provider: 'custom' });
   });
 
+  it('returns { provider, model, effort } for an object entry with effort', () => {
+    const r = '{"a":{"provider":"claude","model":"claude-sonnet-5","effort":"high"}}';
+    expect(resolveProviderOverride('a', r)).toEqual({ provider: 'claude', model: 'claude-sonnet-5', effort: 'high' });
+  });
+
+  it('invalid effort value is treated as unset', () => {
+    expect(resolveProviderOverride('a', '{"a":{"provider":"claude","effort":"max"}}')).toEqual({ provider: 'claude' });
+  });
+
   it('returns null when the project has no entry', () => {
     expect(resolveProviderOverride('other', raw)).toBeNull();
   });

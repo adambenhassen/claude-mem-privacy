@@ -6,6 +6,7 @@ import { HOOK_TIMEOUTS, getTimeout } from './hook-constants.js';
 
 export interface SettingsDefaults {
   CLAUDE_MEM_MODEL: string;
+  CLAUDE_MEM_EFFORT_LEVEL: string;  // '' (off) | 'low' | 'medium' | 'high' — Claude provider only
   CLAUDE_MEM_CONTEXT_OBSERVATIONS: string;
   CLAUDE_MEM_WORKER_PORT: string;
   CLAUDE_MEM_WORKER_HOST: string;
@@ -102,6 +103,7 @@ export interface SettingsDefaults {
 export class SettingsDefaultsManager {
   private static readonly DEFAULTS: SettingsDefaults = {
     CLAUDE_MEM_MODEL: 'claude-haiku-4-5-20251001',
+    CLAUDE_MEM_EFFORT_LEVEL: '',  // off by default — older models reject the effort parameter (#2357)
     CLAUDE_MEM_CONTEXT_OBSERVATIONS: '50',
     CLAUDE_MEM_WORKER_PORT: String(37700 + ((process.getuid?.() ?? 77) % 100)),
     CLAUDE_MEM_WORKER_HOST: '127.0.0.1',

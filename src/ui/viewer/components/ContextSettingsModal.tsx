@@ -10,14 +10,20 @@ const PROVIDER_OPTIONS = [
   { value: 'custom', label: 'Custom' },
 ];
 
-// Known models per provider for the per-project model picker. Claude/Gemini
-// have a fixed set (dropdown); Custom/OpenRouter accept any model id (free text).
+// Known models per provider for the model pickers. Aliases (haiku/sonnet/opus)
+// track the latest of each tier; full ids pin a specific version. Custom/
+// OpenRouter accept any model id (free text).
+const CLAUDE_MODEL_OPTIONS = [
+  { value: 'haiku', label: 'haiku (latest, fastest)' },
+  { value: 'sonnet', label: 'sonnet (latest, balanced)' },
+  { value: 'opus', label: 'opus (latest, highest quality)' },
+  { value: 'claude-haiku-4-5', label: 'claude-haiku-4-5' },
+  { value: 'claude-sonnet-4-6', label: 'claude-sonnet-4-6' },
+  { value: 'claude-sonnet-5', label: 'claude-sonnet-5' },
+  { value: 'claude-opus-4-6', label: 'claude-opus-4-6' },
+];
 const MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
-  claude: [
-    { value: 'haiku', label: 'haiku' },
-    { value: 'sonnet', label: 'sonnet' },
-    { value: 'opus', label: 'opus' },
-  ],
+  claude: CLAUDE_MODEL_OPTIONS,
   gemini: [
     { value: 'gemini-2.5-flash-lite', label: 'gemini-2.5-flash-lite' },
     { value: 'gemini-2.5-flash', label: 'gemini-2.5-flash' },
@@ -25,7 +31,7 @@ const MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
   ],
 };
 
-interface OverrideEntry { project: string; provider: string; model: string; }
+interface OverrideEntry { project: string; provider: string; model: string; effort: string; }
 
 // The setting stores a JSON map { project: "provider" | { provider, model } }.
 // Normalize to a flat editable list, and serialize back — omitting model to
@@ -40,13 +46,16 @@ function parseOverrides(raw: string | undefined): OverrideEntry[] {
     project,
     provider: typeof v === 'string' ? v : String((v as any)?.provider ?? 'claude'),
     model: typeof v === 'string' ? '' : String((v as any)?.model ?? ''),
+    effort: typeof v === 'string' ? '' : String((v as any)?.effort ?? ''),
   }));
 }
 
 function serializeOverrides(entries: OverrideEntry[]): string {
   const map: Record<string, unknown> = {};
   for (const e of entries) {
-    map[e.project] = e.model ? { provider: e.provider, model: e.model } : e.provider;
+    map[e.project] = (e.model || e.effort)
+      ? { provider: e.provider, ...(e.model ? { model: e.model } : {}), ...(e.effort ? { effort: e.effort } : {}) }
+      : e.provider;
   }
   return JSON.stringify(map);
 }
@@ -399,19 +408,35 @@ export function ContextSettingsModal({
               </FormField>
 
               {formState.CLAUDE_MEM_PROVIDER === 'claude' && (
+                <>
                 <FormField
                   label="Claude Model"
-                  tooltip="Claude model used for generating observations"
+                  tooltip="Alias (haiku/sonnet/opus) follows the latest model of that tier; a full id pins a specific version"
                 >
                   <select
                     value={formState.CLAUDE_MEM_MODEL || 'haiku'}
                     onChange={(e) => updateSetting('CLAUDE_MEM_MODEL', e.target.value)}
                   >
-                    <option value="haiku">haiku (fastest)</option>
-                    <option value="sonnet">sonnet (balanced)</option>
-                    <option value="opus">opus (highest quality)</option>
+                    {CLAUDE_MODEL_OPTIONS.map(m => (
+                      <option key={m.value} value={m.value}>{m.label}</option>
+                    ))}
                   </select>
                 </FormField>
+                <FormField
+                  label="Effort Level"
+                  tooltip="Reasoning effort for the observation model. Only newer models support it — older ones (Haiku/Sonnet 4.5 and earlier) reject requests with an effort set."
+                >
+                  <select
+                    value={formState.CLAUDE_MEM_EFFORT_LEVEL || ''}
+                    onChange={(e) => updateSetting('CLAUDE_MEM_EFFORT_LEVEL', e.target.value)}
+                  >
+                    <option value="">Default (off)</option>
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                  </select>
+                </FormField>
+                </>
               )}
 
               {formState.CLAUDE_MEM_PROVIDER === 'gemini' && (
@@ -609,7 +634,7 @@ export function ContextSettingsModal({
                         aria-label={`Provider for ${entry.project}`}
                         value={entry.provider}
                         onChange={(e) => writeOverrides(overrideEntries.map(x =>
-                          x.project === entry.project ? { ...x, provider: e.target.value, model: '' } : x
+                          x.project === entry.project ? { ...x, provider: e.target.value, model: '', effort: '' } : x
                         ))}
                       >
                         {PROVIDER_OPTIONS.map(o => (
@@ -641,6 +666,20 @@ export function ContextSettingsModal({
                           ))}
                         />
                       )}
+                      {entry.provider === 'claude' && (
+                        <select
+                          aria-label={`Effort for ${entry.project}`}
+                          value={entry.effort}
+                          onChange={(e) => writeOverrides(overrideEntries.map(x =>
+                            x.project === entry.project ? { ...x, effort: e.target.value } : x
+                          ))}
+                        >
+                          <option value="">Default effort</option>
+                          <option value="low">low</option>
+                          <option value="medium">medium</option>
+                          <option value="high">high</option>
+                        </select>
+                      )}
                       <button
                         type="button"
                         className="provider-override-remove"
@@ -665,7 +704,7 @@ export function ContextSettingsModal({
                         value=""
                         onChange={(e) => {
                           if (e.target.value) {
-                            writeOverrides([...overrideEntries, { project: e.target.value, provider: formState.CLAUDE_MEM_PROVIDER || 'claude', model: '' }]);
+                            writeOverrides([...overrideEntries, { project: e.target.value, provider: formState.CLAUDE_MEM_PROVIDER || 'claude', model: '', effort: '' }]);
                           }
                         }}
                       >

@@ -206,6 +206,13 @@ export class ClaudeProvider {
     await waitForSlot(maxConcurrent, session.abortController.signal);
 
     const isolatedEnv = sanitizeEnv(await buildIsolatedEnvWithFreshOAuth());
+    // Opt-in effort level. Carried in our own namespace so sanitizeEnv (which
+    // strips CLAUDE_CODE_* leaks, #2357) doesn't eat it; spawnSdkProcess
+    // translates it to CLAUDE_CODE_EFFORT_LEVEL at the spawn boundary.
+    const effort = session.projectEffort || settings.CLAUDE_MEM_EFFORT_LEVEL;
+    if (effort === 'low' || effort === 'medium' || effort === 'high') {
+      isolatedEnv.CLAUDE_MEM_EFFORT_LEVEL = effort;
+    }
     const authMethod = getAuthMethodDescription();
 
     logger.info('SDK', 'Starting SDK query', {

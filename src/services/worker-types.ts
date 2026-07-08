@@ -38,6 +38,8 @@ export interface ActiveSession {
   modelOverride?: string;
   /** Per-project model override (from CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES); wins over the provider's global model and Claude tier routing. */
   projectModel?: string;
+  /** Per-project effort override (Claude only); wins over CLAUDE_MEM_EFFORT_LEVEL. */
+  projectEffort?: string;
   lastSummaryStored?: boolean;
   pendingAgentId?: string | null;
   pendingAgentType?: string | null;

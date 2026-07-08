@@ -139,6 +139,7 @@ export class SessionRoutes extends BaseRouteHandler {
     const override = resolveProviderOverride(session.project, settings.CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES);
     // Apply the per-project model (undefined clears it so global/tier applies).
     session.projectModel = override?.model;
+    session.projectEffort = override?.effort;
     const selectedProvider = this.getSelectedProvider(override);
 
     if (!session.generatorPromise) {

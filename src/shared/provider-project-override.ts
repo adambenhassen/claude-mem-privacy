@@ -1,9 +1,13 @@
 export type Provider = 'claude' | 'gemini' | 'openrouter' | 'custom';
 
+export type EffortLevel = 'low' | 'medium' | 'high';
+
 export interface ProjectOverride {
   provider: Provider;
   /** Optional per-project model id; when unset the provider's global model is used. */
   model?: string;
+  /** Optional per-project effort level (Claude only); when unset the global CLAUDE_MEM_EFFORT_LEVEL applies. */
+  effort?: EffortLevel;
 }
 
 const VALID: Provider[] = ['claude', 'gemini', 'openrouter', 'custom'];
@@ -38,11 +42,12 @@ export function resolveProviderOverride(project: string | undefined, raw: string
     return { provider: v };
   }
   if (v && typeof v === 'object' && !Array.isArray(v)) {
-    const { provider, model } = v as { provider?: unknown; model?: unknown };
+    const { provider, model, effort } = v as { provider?: unknown; model?: unknown; effort?: unknown };
     if (!isProvider(provider)) return null;
-    return typeof model === 'string' && model.trim()
-      ? { provider, model: model.trim() }
-      : { provider };
+    const result: ProjectOverride = { provider };
+    if (typeof model === 'string' && model.trim()) result.model = model.trim();
+    if (effort === 'low' || effort === 'medium' || effort === 'high') result.effort = effort;
+    return result;
   }
   return null;
 }
