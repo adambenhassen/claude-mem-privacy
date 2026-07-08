@@ -116,6 +116,7 @@ export class SettingsRoutes extends BaseRouteHandler {
       'CLAUDE_MEM_FOLDER_CLAUDEMD_ENABLED',
       'CLAUDE_MEM_ALLOWED_PROJECTS',
       'CLAUDE_MEM_EXCLUDED_PROJECTS',
+      'CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES',
     ];
 
     for (const key of settingKeys) {
@@ -193,6 +194,24 @@ export class SettingsRoutes extends BaseRouteHandler {
     const validProviders = ['claude', 'gemini', 'openrouter', 'custom'];
     if (!validProviders.includes(settings.CLAUDE_MEM_PROVIDER)) {
       return { valid: false, error: 'CLAUDE_MEM_PROVIDER must be "claude", "gemini", "openrouter", or "custom"' };
+      }
+    }
+
+    if (settings.CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES) {
+      const validProviders = ['claude', 'gemini', 'openrouter', 'custom'];
+      let map: unknown;
+      try {
+        map = JSON.parse(settings.CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES);
+      } catch {
+        return { valid: false, error: 'CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES must be valid JSON, e.g. {"my-project":"custom"}' };
+      }
+      if (typeof map !== 'object' || map === null || Array.isArray(map)) {
+        return { valid: false, error: 'CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES must be a JSON object mapping project name to provider' };
+      }
+      for (const [project, provider] of Object.entries(map)) {
+        if (typeof provider !== 'string' || !validProviders.includes(provider)) {
+          return { valid: false, error: `CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES["${project}"] must be "claude", "gemini", "openrouter", or "custom"` };
+        }
       }
     }
 

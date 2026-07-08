@@ -18,6 +18,7 @@ import { SessionEventBroadcaster } from '../../events/SessionEventBroadcaster.js
 import { PrivacyCheckValidator } from '../../validation/PrivacyCheckValidator.js';
 import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../../../shared/paths.js';
+import { resolveProviderOverride } from '../../../../shared/provider-project-override.js';
 import { getProjectContext } from '../../../../utils/project-name.js';
 import { normalizePlatformSource } from '../../../../shared/platform-source.js';
 import { handleGeneratorExit } from '../../session/GeneratorExitHandler.js';
@@ -91,7 +92,32 @@ export class SessionRoutes extends BaseRouteHandler {
     return this.sdkAgent;
   }
 
-  private getSelectedProvider(): 'claude' | 'gemini' | 'openrouter' | 'custom' {
+  // A per-project override is an explicit opt-in, so — like the global custom
+  // branch — it must fail loudly when the chosen provider is unavailable rather
+  // than silently degrading to Claude (which would bill the user's Claude
+  // account for a provider they never intended for this project).
+  private assertProviderAvailable(
+    provider: 'claude' | 'gemini' | 'openrouter' | 'custom'
+  ): 'claude' | 'gemini' | 'openrouter' | 'custom' {
+    if (provider === 'custom' && !isCustomAvailable()) {
+      throw new Error('Custom provider selected but no base URL configured. Set CLAUDE_MEM_CUSTOM_BASE_URL in settings.');
+    }
+    if (provider === 'openrouter' && !isOpenRouterAvailable()) {
+      throw new Error('OpenRouter provider selected but no API key configured. Set CLAUDE_MEM_OPENROUTER_API_KEY in settings or OPENROUTER_API_KEY environment variable.');
+    }
+    if (provider === 'gemini' && !isGeminiAvailable()) {
+      throw new Error('Gemini provider selected but no API key configured. Set CLAUDE_MEM_GEMINI_API_KEY in settings or GEMINI_API_KEY environment variable.');
+    }
+    return provider;
+  }
+
+  private getSelectedProvider(project?: string): 'claude' | 'gemini' | 'openrouter' | 'custom' {
+    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const override = resolveProviderOverride(project, settings.CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES);
+    if (override) {
+      logger.debug('SESSION', `Provider override for project "${project}": ${override}`);
+      return this.assertProviderAvailable(override);
+    }
     if (isCustomSelected()) {
       if (!isCustomAvailable()) {
         // Custom is an explicit opt-in with no natural fallback: degrading to
@@ -111,7 +137,7 @@ export class SessionRoutes extends BaseRouteHandler {
     const session = this.sessionManager.getSession(sessionDbId);
     if (!session) return;
 
-    const selectedProvider = this.getSelectedProvider();
+    const selectedProvider = this.getSelectedProvider(session.project);
 
     if (!session.generatorPromise) {
       await this.applyTierRouting(session);

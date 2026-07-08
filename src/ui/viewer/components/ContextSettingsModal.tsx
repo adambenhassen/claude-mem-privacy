@@ -3,6 +3,13 @@ import type { Settings } from '../types';
 import { TerminalPreview } from './TerminalPreview';
 import { useContextPreview } from '../hooks/useContextPreview';
 
+const PROVIDER_OPTIONS = [
+  { value: 'claude', label: 'Claude' },
+  { value: 'gemini', label: 'Gemini' },
+  { value: 'openrouter', label: 'OpenRouter' },
+  { value: 'custom', label: 'Custom' },
+];
+
 interface ContextSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -151,6 +158,20 @@ export function ContextSettingsModal({
   const handleSave = useCallback(() => {
     onSave(formState);
   }, [formState, onSave]);
+
+  // Per-project provider overrides are stored as a JSON map { project: provider }.
+  // Parse defensively so a hand-edited/invalid value never breaks the form.
+  const providerOverrides: Record<string, string> = (() => {
+    try {
+      const parsed = JSON.parse(formState.CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES || '{}');
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+    } catch {
+      return {};
+    }
+  })();
+  const setProviderOverrides = useCallback((next: Record<string, string>) => {
+    updateSetting('CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES', JSON.stringify(next));
+  }, [updateSetting]);
 
   const toggleBoolean = useCallback((key: keyof Settings) => {
     const currentValue = formState[key];
@@ -542,6 +563,61 @@ export function ContextSettingsModal({
                   value={formState.CLAUDE_MEM_EXCLUDED_PROJECTS || ''}
                   onChange={(e) => updateSetting('CLAUDE_MEM_EXCLUDED_PROJECTS', e.target.value)}
                 />
+              </FormField>
+              <FormField
+                label="Provider overrides"
+                tooltip="Use a different AI provider for specific projects. Pick a project, then choose its provider. Projects not listed here use the global AI Provider set under Advanced."
+              >
+                <div className="provider-overrides">
+                  {Object.entries(providerOverrides).map(([project, provider]) => (
+                    <div className="provider-override-row" key={project}>
+                      <span className="provider-override-project" title={project}>{project}</span>
+                      <select
+                        value={provider}
+                        onChange={(e) => setProviderOverrides({ ...providerOverrides, [project]: e.target.value })}
+                      >
+                        {PROVIDER_OPTIONS.map(o => (
+                          <option key={o.value} value={o.value}>{o.label}</option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        className="provider-override-remove"
+                        aria-label={`Remove provider override for ${project}`}
+                        onClick={() => {
+                          const { [project]: _removed, ...rest } = providerOverrides;
+                          setProviderOverrides(rest);
+                        }}
+                      >
+                        ×
+                      </button>
+                    </div>
+                  ))}
+                  {(() => {
+                    const available = projects.filter(p => !(p in providerOverrides));
+                    if (available.length === 0) {
+                      return Object.keys(providerOverrides).length === 0 ? (
+                        <p className="provider-overrides-empty">No projects available yet — overrides appear here once projects are tracked.</p>
+                      ) : null;
+                    }
+                    return (
+                      <select
+                        className="provider-override-add"
+                        value=""
+                        onChange={(e) => {
+                          if (e.target.value) {
+                            setProviderOverrides({ ...providerOverrides, [e.target.value]: formState.CLAUDE_MEM_PROVIDER || 'claude' });
+                          }
+                        }}
+                      >
+                        <option value="">+ Add project…</option>
+                        {available.map(p => (
+                          <option key={p} value={p}>{p}</option>
+                        ))}
+                      </select>
+                    );
+                  })()}
+                </div>
               </FormField>
             </CollapsibleSection>
           </div>

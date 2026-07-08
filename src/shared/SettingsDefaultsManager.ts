@@ -28,6 +28,7 @@ export interface SettingsDefaults {
   CLAUDE_MEM_CUSTOM_API_KEY: string;
   CLAUDE_MEM_CUSTOM_MODEL: string;
   CLAUDE_MEM_CUSTOM_BASE_URL: string;
+  CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES: string;
   CLAUDE_MEM_DATA_DIR: string;
   CLAUDE_MEM_LOG_LEVEL: string;
   CLAUDE_MEM_PYTHON_VERSION: string;
@@ -123,6 +124,7 @@ export class SettingsDefaultsManager {
     CLAUDE_MEM_CUSTOM_API_KEY: '',  // Optional — custom OpenAI-compatible endpoints may be keyless
     CLAUDE_MEM_CUSTOM_MODEL: '',  // Model id passed verbatim (e.g. openai/fcm)
     CLAUDE_MEM_CUSTOM_BASE_URL: '',  // OpenAI-compatible base URL, e.g. http://localhost:8000/v1
+    CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES: '{}',  // JSON map { projectName: 'claude'|'gemini'|'openrouter'|'custom' } — per-project provider override
     CLAUDE_MEM_DATA_DIR: join(homedir(), '.claude-mem'),
     CLAUDE_MEM_LOG_LEVEL: 'INFO',
     CLAUDE_MEM_PYTHON_VERSION: '3.13',

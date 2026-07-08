@@ -97,4 +97,5 @@ export interface Settings {
 
   CLAUDE_MEM_ALLOWED_PROJECTS?: string;
   CLAUDE_MEM_EXCLUDED_PROJECTS?: string;
+  CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES?: string;
 }
