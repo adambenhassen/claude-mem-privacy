@@ -132,7 +132,8 @@
 >
 > - 🔒 an **on-by-default redaction layer** that scrubs secrets and PII from every observation *before* it is stored in SQLite, indexed in Chroma, written to the queue or logs, or sent to any model for compression (the engine **fails closed**) — see [Privacy & Redaction](#privacy--redaction);
 > - 🔌 a **custom OpenAI-compatible provider** so compression can run against any OpenAI-style endpoint (including local/self-hosted models) — see [Custom AI Provider](#custom-ai-provider);
-> - 🎯 a **project allow-list with SessionStart gating** so memory is only captured/injected for the projects you choose — see [Project Allow-list](#project-allow-list).
+> - 🎯 a **project allow-list with SessionStart gating** so memory is only captured/injected for the projects you choose — see [Project Allow-list](#project-allow-list);
+> - 🎛️ **per-project provider, model & effort overrides** so each project can pin its own compression backend, model version, and reasoning effort — see [Per-Project Provider, Model & Effort Overrides](#per-project-provider-model--effort-overrides).
 >
 > Everything else tracks upstream.
 >
@@ -200,6 +201,7 @@ The installer handles dependencies, plugin setup, AI provider configuration, wor
 - 🔒 **Redaction Layer (this fork)** - On-by-default PII/secret scrubbing across every surface, plus `<private>` tags to exclude content from storage entirely — see [Privacy & Redaction](#privacy--redaction)
 - 🔌 **Custom AI Provider (this fork)** - Run compression against any OpenAI-compatible endpoint, including local/self-hosted models — see [Custom AI Provider](#custom-ai-provider)
 - 🎯 **Project Allow-list (this fork)** - Capture and inject memory only for the projects you opt in (glob allow/deny) — see [Project Allow-list](#project-allow-list)
+- 🎛️ **Per-Project Overrides (this fork)** - Pin a provider, model (alias or full id), and Claude effort level per project — see [Per-Project Provider, Model & Effort Overrides](#per-project-provider-model--effort-overrides)
 - ⚙️ **Context Configuration** - Fine-grained control over what context gets injected
 - 🤖 **Automatic Operation** - No manual intervention required
 - 🔗 **Citations** - Reference past observations with IDs (access via http://localhost:37777/api/observation/{id} or view all in the web viewer at http://localhost:37777)
@@ -397,6 +399,25 @@ By default claude-mem tracks every project. This fork adds opt-in **project gati
   "CLAUDE_MEM_ALLOWED_PROJECTS": "~/work/**,~/repos/myapp"
 }
 ```
+
+### Per-Project Provider, Model & Effort Overrides
+
+Projects not listed use the global `CLAUDE_MEM_PROVIDER`. This fork lets individual projects override the provider, pin a specific model, and (for Claude) set a reasoning effort level — editable per project in the viewer's settings under **Project Filtering → Provider overrides**.
+
+| Setting | Default | Purpose |
+|---|---|---|
+| `CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES` | `{}` | JSON map `{ project: "provider" \| { provider, model?, effort? } }` |
+| `CLAUDE_MEM_EFFORT_LEVEL` | _(empty = off)_ | Global reasoning effort for the Claude provider: `low`, `medium`, or `high` |
+
+```json
+{
+  "CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES": "{\"my-app\":{\"provider\":\"claude\",\"model\":\"claude-sonnet-4-6\",\"effort\":\"low\"},\"scratch\":\"custom\"}"
+}
+```
+
+- **Model** accepts a tier alias (`haiku`, `sonnet`, `opus` — always the latest of that tier) or a full model id (e.g. `claude-sonnet-5`) to pin a version; the same applies to the global Claude Model picker.
+- **Effort** applies to the Claude provider only. It is off by default because older models reject the effort parameter; a per-project `effort` wins over the global `CLAUDE_MEM_EFFORT_LEVEL`.
+- An override is an explicit opt-in: if the chosen provider isn't configured (e.g. `custom` without a base URL), generation fails loudly instead of silently falling back to Claude.
 
 ### Mode & Language Configuration
 
