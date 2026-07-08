@@ -36,6 +36,8 @@ export interface ActiveSession {
   idleTimedOut?: boolean;  
   lastGeneratorActivity: number;
   modelOverride?: string;
+  /** Per-project model override (from CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES); wins over the provider's global model and Claude tier routing. */
+  projectModel?: string;
   lastSummaryStored?: boolean;
   pendingAgentId?: string | null;
   pendingAgentType?: string | null;

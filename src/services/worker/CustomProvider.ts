@@ -28,8 +28,8 @@ export class CustomProvider extends OpenRouterProvider {
     return false;
   }
 
-  protected getConfig(): OpenRouterConfig {
-    return getCustomConfig();
+  protected getConfig(modelOverride?: string): OpenRouterConfig {
+    return getCustomConfig(modelOverride);
   }
 
   protected missingApiKeyError(): Error {
@@ -37,13 +37,14 @@ export class CustomProvider extends OpenRouterProvider {
   }
 }
 
-function getCustomConfig(): OpenRouterConfig {
+function getCustomConfig(modelOverride?: string): OpenRouterConfig {
   const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
 
   const apiKey = settings.CLAUDE_MEM_CUSTOM_API_KEY || '';
 
   // Model is passed verbatim — any OpenAI-compatible model id (e.g. openai/fcm).
-  const rawModel: unknown = settings.CLAUDE_MEM_CUSTOM_MODEL;
+  // A per-project model override wins over the global setting.
+  const rawModel: unknown = modelOverride || settings.CLAUDE_MEM_CUSTOM_MODEL;
   const model = typeof rawModel === 'string' && rawModel.trim() ? rawModel : '';
 
   // Reuse the shared resolver: a bare base URL gets `/chat/completions`

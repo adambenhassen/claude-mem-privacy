@@ -169,8 +169,8 @@ export class GeminiProvider extends OpenAICompatibleProvider<GeminiConfig> {
     super(dbManager, sessionManager);
   }
 
-  protected getConfig(): GeminiConfig {
-    return this.getGeminiConfig();
+  protected getConfig(modelOverride?: string): GeminiConfig {
+    return this.getGeminiConfig(modelOverride);
   }
 
   protected missingApiKeyError(): Error {
@@ -292,14 +292,14 @@ export class GeminiProvider extends OpenAICompatibleProvider<GeminiConfig> {
     };
   }
 
-  private getGeminiConfig(): GeminiConfig {
+  private getGeminiConfig(modelOverride?: string): GeminiConfig {
     const settingsPath = paths.settings();
     const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
 
     const apiKey = settings.CLAUDE_MEM_GEMINI_API_KEY || getCredential('GEMINI_API_KEY') || '';
 
     const defaultModel: GeminiModel = 'gemini-2.5-flash';
-    const configuredModel = settings.CLAUDE_MEM_GEMINI_MODEL || defaultModel;
+    const configuredModel = modelOverride || settings.CLAUDE_MEM_GEMINI_MODEL || defaultModel;
     const validModels: GeminiModel[] = [
       'gemini-2.5-flash-lite',
       'gemini-2.5-flash',

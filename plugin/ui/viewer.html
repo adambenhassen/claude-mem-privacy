@@ -2601,7 +2601,7 @@
     }
 
     .provider-override-project {
-      flex: 1;
+      flex: 1.4 1 0;
       min-width: 0;
       font-size: 13px;
       color: var(--color-text-primary);
@@ -2610,9 +2610,11 @@
       white-space: nowrap;
     }
 
-    .form-field .provider-override-row select {
-      flex: 0 0 auto;
-      width: 150px;
+    .form-field .provider-override-row select,
+    .form-field .provider-override-row .provider-override-model-input {
+      flex: 1 1 0;
+      min-width: 0;
+      width: auto;
       height: 32px;
       padding: 6px 10px;
     }

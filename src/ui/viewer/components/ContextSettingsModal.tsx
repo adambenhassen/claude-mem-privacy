@@ -10,6 +10,47 @@ const PROVIDER_OPTIONS = [
   { value: 'custom', label: 'Custom' },
 ];
 
+// Known models per provider for the per-project model picker. Claude/Gemini
+// have a fixed set (dropdown); Custom/OpenRouter accept any model id (free text).
+const MODEL_OPTIONS: Record<string, { value: string; label: string }[]> = {
+  claude: [
+    { value: 'haiku', label: 'haiku' },
+    { value: 'sonnet', label: 'sonnet' },
+    { value: 'opus', label: 'opus' },
+  ],
+  gemini: [
+    { value: 'gemini-2.5-flash-lite', label: 'gemini-2.5-flash-lite' },
+    { value: 'gemini-2.5-flash', label: 'gemini-2.5-flash' },
+    { value: 'gemini-3-flash-preview', label: 'gemini-3-flash-preview' },
+  ],
+};
+
+interface OverrideEntry { project: string; provider: string; model: string; }
+
+// The setting stores a JSON map { project: "provider" | { provider, model } }.
+// Normalize to a flat editable list, and serialize back — omitting model to
+// keep provider-only entries compact ("custom" rather than { provider: … }).
+function parseOverrides(raw: string | undefined): OverrideEntry[] {
+  let map: Record<string, unknown> = {};
+  try {
+    const parsed = JSON.parse(raw || '{}');
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) map = parsed;
+  } catch { /* invalid JSON → empty list */ }
+  return Object.entries(map).map(([project, v]) => ({
+    project,
+    provider: typeof v === 'string' ? v : String((v as any)?.provider ?? 'claude'),
+    model: typeof v === 'string' ? '' : String((v as any)?.model ?? ''),
+  }));
+}
+
+function serializeOverrides(entries: OverrideEntry[]): string {
+  const map: Record<string, unknown> = {};
+  for (const e of entries) {
+    map[e.project] = e.model ? { provider: e.provider, model: e.model } : e.provider;
+  }
+  return JSON.stringify(map);
+}
+
 interface ContextSettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -159,18 +200,10 @@ export function ContextSettingsModal({
     onSave(formState);
   }, [formState, onSave]);
 
-  // Per-project provider overrides are stored as a JSON map { project: provider }.
-  // Parse defensively so a hand-edited/invalid value never breaks the form.
-  const providerOverrides: Record<string, string> = (() => {
-    try {
-      const parsed = JSON.parse(formState.CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES || '{}');
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
-    } catch {
-      return {};
-    }
-  })();
-  const setProviderOverrides = useCallback((next: Record<string, string>) => {
-    updateSetting('CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES', JSON.stringify(next));
+  // Per-project provider/model overrides, normalized to an editable list.
+  const overrideEntries = parseOverrides(formState.CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES);
+  const writeOverrides = useCallback((entries: OverrideEntry[]) => {
+    updateSetting('CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES', serializeOverrides(entries));
   }, [updateSetting]);
 
   const toggleBoolean = useCallback((key: keyof Settings) => {
@@ -569,44 +602,70 @@ export function ContextSettingsModal({
                 tooltip="Use a different AI provider for specific projects. Pick a project, then choose its provider. Projects not listed here use the global AI Provider set under Advanced."
               >
                 <div className="provider-overrides">
-                  {Object.entries(providerOverrides).map(([project, provider]) => (
-                    <div className="provider-override-row" key={project}>
-                      <span className="provider-override-project" title={project}>{project}</span>
+                  {overrideEntries.map((entry) => (
+                    <div className="provider-override-row" key={entry.project}>
+                      <span className="provider-override-project" title={entry.project}>{entry.project}</span>
                       <select
-                        value={provider}
-                        onChange={(e) => setProviderOverrides({ ...providerOverrides, [project]: e.target.value })}
+                        aria-label={`Provider for ${entry.project}`}
+                        value={entry.provider}
+                        onChange={(e) => writeOverrides(overrideEntries.map(x =>
+                          x.project === entry.project ? { ...x, provider: e.target.value, model: '' } : x
+                        ))}
                       >
                         {PROVIDER_OPTIONS.map(o => (
                           <option key={o.value} value={o.value}>{o.label}</option>
                         ))}
                       </select>
+                      {MODEL_OPTIONS[entry.provider] ? (
+                        <select
+                          aria-label={`Model for ${entry.project}`}
+                          value={entry.model}
+                          onChange={(e) => writeOverrides(overrideEntries.map(x =>
+                            x.project === entry.project ? { ...x, model: e.target.value } : x
+                          ))}
+                        >
+                          <option value="">Default model</option>
+                          {MODEL_OPTIONS[entry.provider].map(m => (
+                            <option key={m.value} value={m.value}>{m.label}</option>
+                          ))}
+                        </select>
+                      ) : (
+                        <input
+                          type="text"
+                          className="provider-override-model-input"
+                          aria-label={`Model for ${entry.project}`}
+                          placeholder="model id (optional)"
+                          value={entry.model}
+                          onChange={(e) => writeOverrides(overrideEntries.map(x =>
+                            x.project === entry.project ? { ...x, model: e.target.value } : x
+                          ))}
+                        />
+                      )}
                       <button
                         type="button"
                         className="provider-override-remove"
-                        aria-label={`Remove provider override for ${project}`}
-                        onClick={() => {
-                          const { [project]: _removed, ...rest } = providerOverrides;
-                          setProviderOverrides(rest);
-                        }}
+                        aria-label={`Remove provider override for ${entry.project}`}
+                        onClick={() => writeOverrides(overrideEntries.filter(x => x.project !== entry.project))}
                       >
                         ×
                       </button>
                     </div>
                   ))}
                   {(() => {
-                    const available = projects.filter(p => !(p in providerOverrides));
+                    const available = projects.filter(p => !overrideEntries.some(e => e.project === p));
                     if (available.length === 0) {
-                      return Object.keys(providerOverrides).length === 0 ? (
+                      return overrideEntries.length === 0 ? (
                         <p className="provider-overrides-empty">No projects available yet — overrides appear here once projects are tracked.</p>
                       ) : null;
                     }
                     return (
                       <select
                         className="provider-override-add"
+                        aria-label="Add a project override"
                         value=""
                         onChange={(e) => {
                           if (e.target.value) {
-                            setProviderOverrides({ ...providerOverrides, [e.target.value]: formState.CLAUDE_MEM_PROVIDER || 'claude' });
+                            writeOverrides([...overrideEntries, { project: e.target.value, provider: formState.CLAUDE_MEM_PROVIDER || 'claude', model: '' }]);
                           }
                         }}
                       >

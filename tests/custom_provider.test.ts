@@ -154,6 +154,19 @@ describe('CustomProvider', () => {
       expect(init.headers['Authorization']).toBe('Bearer ');
     });
 
+    it('session.projectModel (per-project override) wins over CLAUDE_MEM_CUSTOM_MODEL', async () => {
+      customSettings.CLAUDE_MEM_CUSTOM_MODEL = 'openai/fcm';
+      global.fetch = mock(() => Promise.resolve(new Response(JSON.stringify({
+        choices: [{ message: { content: observationXml } }],
+        usage: { total_tokens: 50 },
+      }))));
+
+      await agent.startSession(makeSession({ projectModel: 'qwen2.5-coder' }));
+
+      const [, init] = (global.fetch as any).mock.calls[0];
+      expect(JSON.parse(init.body).model).toBe('qwen2.5-coder');
+    });
+
     it('throws fail-fast when no model is configured (does not send model:"")', async () => {
       customSettings.CLAUDE_MEM_CUSTOM_MODEL = '';
       global.fetch = mock(() => Promise.resolve(new Response('{}')));

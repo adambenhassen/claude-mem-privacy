@@ -4,9 +4,22 @@ import { resolveProviderOverride } from '../../src/shared/provider-project-overr
 describe('resolveProviderOverride', () => {
   const raw = '{"work-repo":"custom","side-project":"claude"}';
 
-  it('returns the overridden provider for a matching project', () => {
-    expect(resolveProviderOverride('work-repo', raw)).toBe('custom');
-    expect(resolveProviderOverride('side-project', raw)).toBe('claude');
+  it('returns { provider } for a bare-string entry', () => {
+    expect(resolveProviderOverride('work-repo', raw)).toEqual({ provider: 'custom' });
+    expect(resolveProviderOverride('side-project', raw)).toEqual({ provider: 'claude' });
+  });
+
+  it('returns { provider, model } for an object entry', () => {
+    const r = '{"a":{"provider":"custom","model":"qwen2.5-coder"}}';
+    expect(resolveProviderOverride('a', r)).toEqual({ provider: 'custom', model: 'qwen2.5-coder' });
+  });
+
+  it('object entry without a model omits model', () => {
+    expect(resolveProviderOverride('a', '{"a":{"provider":"gemini"}}')).toEqual({ provider: 'gemini' });
+  });
+
+  it('blank/whitespace model is treated as unset', () => {
+    expect(resolveProviderOverride('a', '{"a":{"provider":"custom","model":"  "}}')).toEqual({ provider: 'custom' });
   });
 
   it('returns null when the project has no entry', () => {
@@ -23,9 +36,11 @@ describe('resolveProviderOverride', () => {
     expect(resolveProviderOverride('work-repo', '{not json')).toBeNull();
   });
 
-  it('ignores an unknown provider value', () => {
+  it('ignores an unknown or missing provider value', () => {
     expect(resolveProviderOverride('x', '{"x":"bogus"}')).toBeNull();
     expect(resolveProviderOverride('x', '{"x":123}')).toBeNull();
+    expect(resolveProviderOverride('x', '{"x":{"provider":"bogus"}}')).toBeNull();
+    expect(resolveProviderOverride('x', '{"x":{"model":"m"}}')).toBeNull();
   });
 
   it('ignores non-object JSON', () => {

@@ -182,7 +182,7 @@ export class ClaudeProvider {
     // Find and validate Claude executable (shared utility, closes #2222)
     const claudePath = findClaudeExecutable('SDK');
 
-    const modelId = session.modelOverride || this.getModelId();
+    const modelId = session.projectModel || session.modelOverride || this.getModelId();
     session.lastModelId = typeof modelId === 'string' ? modelId : undefined;
     // Each query() starts a fresh SDK process, so its total_cost_usd
     // accumulator starts from zero — reset the per-turn cost baseline with it.

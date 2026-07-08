@@ -18,7 +18,7 @@ import { SessionEventBroadcaster } from '../../events/SessionEventBroadcaster.js
 import { PrivacyCheckValidator } from '../../validation/PrivacyCheckValidator.js';
 import { SettingsDefaultsManager } from '../../../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../../../shared/paths.js';
-import { resolveProviderOverride } from '../../../../shared/provider-project-override.js';
+import { resolveProviderOverride, type ProjectOverride } from '../../../../shared/provider-project-override.js';
 import { getProjectContext } from '../../../../utils/project-name.js';
 import { normalizePlatformSource } from '../../../../shared/platform-source.js';
 import { handleGeneratorExit } from '../../session/GeneratorExitHandler.js';
@@ -111,12 +111,10 @@ export class SessionRoutes extends BaseRouteHandler {
     return provider;
   }
 
-  private getSelectedProvider(project?: string): 'claude' | 'gemini' | 'openrouter' | 'custom' {
-    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
-    const override = resolveProviderOverride(project, settings.CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES);
+  private getSelectedProvider(override: ProjectOverride | null): 'claude' | 'gemini' | 'openrouter' | 'custom' {
     if (override) {
-      logger.debug('SESSION', `Provider override for project "${project}": ${override}`);
-      return this.assertProviderAvailable(override);
+      logger.debug('SESSION', `Provider override: ${override.provider}${override.model ? ` (model: ${override.model})` : ''}`);
+      return this.assertProviderAvailable(override.provider);
     }
     if (isCustomSelected()) {
       if (!isCustomAvailable()) {
@@ -137,7 +135,11 @@ export class SessionRoutes extends BaseRouteHandler {
     const session = this.sessionManager.getSession(sessionDbId);
     if (!session) return;
 
-    const selectedProvider = this.getSelectedProvider(session.project);
+    const settings = SettingsDefaultsManager.loadFromFile(USER_SETTINGS_PATH);
+    const override = resolveProviderOverride(session.project, settings.CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES);
+    // Apply the per-project model (undefined clears it so global/tier applies).
+    session.projectModel = override?.model;
+    const selectedProvider = this.getSelectedProvider(override);
 
     if (!session.generatorPromise) {
       await this.applyTierRouting(session);

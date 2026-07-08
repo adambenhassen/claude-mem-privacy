@@ -208,9 +208,15 @@ export class SettingsRoutes extends BaseRouteHandler {
       if (typeof map !== 'object' || map === null || Array.isArray(map)) {
         return { valid: false, error: 'CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES must be a JSON object mapping project name to provider' };
       }
-      for (const [project, provider] of Object.entries(map)) {
+      // Each entry is either a bare provider string ("custom") or an object
+      // { provider, model? } for a per-project model override.
+      for (const [project, entry] of Object.entries(map)) {
+        const provider = typeof entry === 'string' ? entry : (entry as Record<string, unknown>)?.provider;
         if (typeof provider !== 'string' || !validProviders.includes(provider)) {
-          return { valid: false, error: `CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES["${project}"] must be "claude", "gemini", "openrouter", or "custom"` };
+          return { valid: false, error: `CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES["${project}"] must be a provider ("claude", "gemini", "openrouter", "custom") or { provider, model }` };
+        }
+        if (typeof entry === 'object' && entry !== null && 'model' in entry && typeof (entry as Record<string, unknown>).model !== 'string') {
+          return { valid: false, error: `CLAUDE_MEM_PROVIDER_PROJECT_OVERRIDES["${project}"].model must be a string` };
         }
       }
     }

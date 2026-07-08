@@ -60,8 +60,10 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
     this.sessionManager = sessionManager;
   }
 
-  /** Resolve API key, model, and any per-provider request parameters. */
-  protected abstract getConfig(): TConfig;
+  /** Resolve API key, model, and any per-provider request parameters. When
+   * `modelOverride` is set (per-project model), it takes precedence over the
+   * provider's global model setting. */
+  protected abstract getConfig(modelOverride?: string): TConfig;
 
   /** Throw a provider-specific "API key not configured" error. */
   protected abstract missingApiKeyError(): Error;
@@ -98,7 +100,7 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
   }
 
   async startSession(session: ActiveSession, worker?: WorkerRef): Promise<void> {
-    const config = this.getConfig();
+    const config = this.getConfig(session.projectModel);
     const { apiKey, model } = config;
     session.lastModelId = model;
     this.prepareSessionExtras(session, config);

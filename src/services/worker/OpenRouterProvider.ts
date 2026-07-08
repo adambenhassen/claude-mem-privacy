@@ -157,8 +157,8 @@ export class OpenRouterProvider extends OpenAICompatibleProvider<OpenRouterConfi
     super(dbManager, sessionManager);
   }
 
-  protected getConfig(): OpenRouterConfig {
-    return this.getOpenRouterConfig();
+  protected getConfig(modelOverride?: string): OpenRouterConfig {
+    return this.getOpenRouterConfig(modelOverride);
   }
 
   protected missingApiKeyError(): Error {
@@ -336,18 +336,19 @@ export class OpenRouterProvider extends OpenAICompatibleProvider<OpenRouterConfi
     return { content, tokensUsed, inputTokens: realInputTokens, outputTokens: realOutputTokens, costUsd, servedModel };
   }
 
-  private getOpenRouterConfig(): OpenRouterConfig {
+  private getOpenRouterConfig(modelOverride?: string): OpenRouterConfig {
     const settingsPath = USER_SETTINGS_PATH;
     const settings = SettingsDefaultsManager.loadFromFile(settingsPath);
 
     const apiKey = settings.CLAUDE_MEM_OPENROUTER_API_KEY || getCredential('OPENROUTER_API_KEY') || '';
 
     // Model is passed verbatim — any OpenAI-compatible model id is accepted
-    // (e.g. deepseek-chat, an LM Studio local model). #2393. Settings are raw
-    // JSON passthrough, so coerce non-string spellings (e.g. a JSON-array
-    // fallback list) to a string instead of leaking them downstream, where
-    // the telemetry scrubber drops non-string model values silently.
-    const rawModel: unknown = settings.CLAUDE_MEM_OPENROUTER_MODEL;
+    // (e.g. deepseek-chat, an LM Studio local model). #2393. A per-project
+    // model override wins over the global setting. Settings are raw JSON
+    // passthrough, so coerce non-string spellings (e.g. a JSON-array fallback
+    // list) to a string instead of leaking them downstream, where the
+    // telemetry scrubber drops non-string model values silently.
+    const rawModel: unknown = modelOverride || settings.CLAUDE_MEM_OPENROUTER_MODEL;
     const model = typeof rawModel === 'string' && rawModel.trim()
       ? rawModel
       : Array.isArray(rawModel) && rawModel.length > 0
