@@ -19,33 +19,74 @@ export interface DrainOptions {
 }
 
 /**
- * Per-session in-RAM observation buffer. This replaces the durable
- * `pending_messages` SQLite queue (and the BullMQ engine that mirrored it).
+ * Persistence delegate: mirrors the buffer into the `pending_messages` SQLite
+ * table so unconfirmed work survives a worker restart. insert() returns the
+ * durable row id (used as the message id) or 0 when the row was suppressed as
+ * a duplicate by the UNIQUE(content_session_id, tool_use_id) index.
+ */
+export interface BufferPersistence {
+  insert(sessionDbId: number, message: PendingMessage): number;
+  remove(messageId: number): void;
+  removeSession(sessionDbId: number): void;
+}
+
+/**
+ * Per-session observation buffer: RAM for live control flow, write-through to
+ * the durable `pending_messages` table (when persistence is attached) so
+ * nothing is lost across worker restarts. A row is inserted on enqueue and
+ * deleted on confirm (successful store), explicit clear(), an
+ * unrecoverable-session drop during recovery, or the sdk_sessions FK CASCADE.
+ * Surviving rows are reloaded by the startup sweep AND whenever their session
+ * is re-created in RAM (SessionManager.restorePersistedForSession), so a
+ * teardown mid-run doesn't strand them until the next restart.
  *
- * Why in-RAM and not durable: a buffered message is one tool-use fragment fed
- * to a stateful, non-deterministic reducer (the memory agent batches N
- * tool-uses into M observations using in-memory conversation context). The old
- * durable queue persisted the fragments but threw away the reducer state, so
- * "replaying" pending rows after a crash regenerated different/duplicate
- * observations or looped forever — that was the retry storm. The Claude Code
- * transcript JSONL is the real durable source of truth, and transcript replay
- * is the recovery path. So this buffer deliberately holds work only for the
- * worker process lifetime: no 'processing' state to resurrect on restart, no
- * startup sweep, no respawn-on-pending. If the worker dies, the buffer is gone
- * and recovery is a transcript replay.
+ * The old durable queue's respawn-on-pending loop was a retry storm; the
+ * replacement is NOT that loop: failed generators reschedule with capped
+ * exponential backoff (see SessionRoutes.scheduleRedrain), and startup
+ * recovery runs once. The old queue's other failure — replaying fragments
+ * into a cold reducer context — is avoided by persisting the conversation
+ * history at every confirmed turn (sdk_sessions.conversation_history) and
+ * restoring it on recovery.
  *
- * confirm()/resetClaimed() exist only as in-process control flow within a
- * single live generator pass (drop a stored batch; re-yield a batch that
- * couldn't be stored yet because the memory session id wasn't captured). They
- * never cross a process boundary.
+ * confirm()/resetClaimed() are in-process control flow within a live generator
+ * pass; claims are deliberately not persisted (an unconfirmed row is pending
+ * again after a restart, whatever its in-flight state was).
  */
 export class SessionMessageBuffer {
   private readonly buffers = new Map<number, BufferedMessage[]>();
   private readonly events = new Map<number, EventEmitter>();
   private readonly seenToolUseIds = new Map<number, Set<string>>();
   private nextId = 1;
+  private readonly persistence?: BufferPersistence;
 
-  constructor(private readonly onMutate?: () => void) {}
+  // Persistence is a constructor arg, not attach-later: ids minted before an
+  // attach would share the number space with durable rowids and a confirm
+  // could delete someone else's row.
+  constructor(private readonly onMutate?: () => void, persistence?: BufferPersistence) {
+    this.persistence = persistence;
+  }
+
+  /**
+   * Preload rows recovered from the durable table at startup. Bypasses
+   * persistence (the rows already exist) and seeds the dedup set so re-ingested
+   * tool-uses are still suppressed.
+   */
+  restore(sessionDbId: number, rows: Array<{ id: number; message: PendingMessage; enqueuedAt: number }>): number {
+    const list = this.getList(sessionDbId);
+    const seen = this.getSeen(sessionDbId);
+    for (const row of rows) {
+      if (row.message.toolUseId) {
+        seen.add(row.message.toolUseId);
+      }
+      list.push({ id: row.id, message: row.message, claimed: false, enqueuedAt: row.enqueuedAt });
+      this.nextId = Math.max(this.nextId, row.id + 1);
+    }
+    if (rows.length > 0) {
+      this.onMutate?.();
+      this.signal(sessionDbId);
+    }
+    return rows.length;
+  }
 
   /**
    * Append a message. Returns the assigned id, or 0 if suppressed as a
@@ -55,27 +96,52 @@ export class SessionMessageBuffer {
    */
   enqueue(sessionDbId: number, message: PendingMessage): number {
     const toolUseId = message.toolUseId;
-    if (toolUseId) {
-      const seen = this.getSeen(sessionDbId);
-      if (seen.has(toolUseId)) {
-        return 0;
-      }
-      seen.add(toolUseId);
+    if (toolUseId && this.getSeen(sessionDbId).has(toolUseId)) {
+      return 0;
     }
 
-    const id = this.nextId++;
+    let id: number;
+    if (this.persistence) {
+      // May throw (DB error): the dedup set must not be marked yet, or a
+      // retry of this tool-use would be suppressed as a duplicate and lost.
+      id = this.persistence.insert(sessionDbId, message);
+      if (id === 0) {
+        // Durable UNIQUE index says duplicate (e.g. re-ingest after restart).
+        if (toolUseId) this.getSeen(sessionDbId).add(toolUseId);
+        return 0;
+      }
+    } else {
+      id = this.nextId++;
+    }
+    if (toolUseId) {
+      this.getSeen(sessionDbId).add(toolUseId);
+    }
     this.getList(sessionDbId).push({ id, message, claimed: false, enqueuedAt: Date.now() });
     this.onMutate?.();
     this.signal(sessionDbId);
     return id;
   }
 
-  /** Remove a stored message by id. Returns 1 if found, 0 otherwise. */
-  confirm(messageId: number): number {
-    for (const list of this.buffers.values()) {
+  /** Remove a stored message by id. Returns 1 if found, 0 otherwise. Pass sessionDbId when known for an O(1) list lookup. */
+  confirm(messageId: number, sessionDbId?: number): number {
+    const lists = sessionDbId !== undefined
+      ? [this.buffers.get(sessionDbId) ?? []]
+      : this.buffers.values();
+    for (const list of lists) {
       const idx = list.findIndex(m => m.id === messageId);
       if (idx !== -1) {
         list.splice(idx, 1);
+        // The observation is already stored; a failed row delete must not
+        // abort the confirm loop. Ceiling: the leaked row is replayed on the
+        // next restart, where the observations content-hash unique index
+        // usually absorbs the duplicate. Log loud so the row id is findable.
+        try {
+          this.persistence?.remove(messageId);
+        } catch (error) {
+          logger.error('QUEUE', 'Failed to delete confirmed pending row — a restart may replay it', {
+            data: { messageId }
+          }, error instanceof Error ? error : new Error(String(error)));
+        }
         this.onMutate?.();
         return 1;
       }
@@ -101,10 +167,11 @@ export class SessionMessageBuffer {
     return reset;
   }
 
-  /** Drop everything buffered for a session. */
+  /** Drop everything buffered for a session — an explicit discard, so the durable rows go too. */
   clear(sessionDbId: number): number {
     const cleared = this.buffers.get(sessionDbId)?.length ?? 0;
     this.buffers.delete(sessionDbId);
+    this.persistence?.removeSession(sessionDbId);
     // Mirror dispose(): drop the dedup set too. Otherwise a clear() not followed
     // by dispose() leaves seenToolUseIds intact, so a later enqueue carrying a
     // previously-seen toolUseId is silently suppressed (returns 0) and lost.
@@ -115,7 +182,12 @@ export class SessionMessageBuffer {
     return cleared;
   }
 
-  /** Forget a session entirely (buffer, dedup set, event emitter). */
+  /**
+   * Forget a session's RAM state (buffer, dedup set, event emitter). Durable
+   * rows are deliberately NOT touched: on a clean teardown the buffer is empty
+   * (every message was confirmed), and on any other teardown the surviving rows
+   * are exactly what startup recovery must reprocess.
+   */
   dispose(sessionDbId: number): void {
     this.buffers.delete(sessionDbId);
     this.seenToolUseIds.delete(sessionDbId);

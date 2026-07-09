@@ -45,6 +45,10 @@ export interface ActiveSession {
   pendingAgentType?: string | null;
   abortReason?: 'idle' | 'shutdown' | 'overflow' | 'restart-guard' | 'quota' | string | null;
   respawnTimer?: ReturnType<typeof setTimeout>;
+  /** Set when the generator died on any non-abort failure with work still buffered: the exit handler preserves the session/buffer, then the caller (SessionRoutes finally) schedules the redrain. */
+  pendingRedrain?: boolean;
+  /** Consecutive redrain reschedules — drives the backoff; reset whenever a batch is confirmed. */
+  redrainAttempts?: number;
   /** When the latest compression prompt was dispatched to the model — telemetry compression_ms. */
   lastPromptSentAt?: number | null;
   /** Real token usage and provider-reported cost from the latest model response (never estimated) — telemetry tokens_input/output/cost_usd. */

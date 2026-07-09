@@ -286,6 +286,15 @@ This fork adds a redaction layer (**on by default**) that removes secrets and PI
 
 See [Architecture Overview](https://docs.claude-mem.ai/architecture/overview) for details.
 
+### Durable Queue & Offline Resilience
+
+Observations are never lost to a network outage, provider failure, or worker restart:
+
+- **Write-through queue** — every captured tool use is mirrored to SQLite (`pending_messages`) on enqueue and deleted only after its observation is successfully stored.
+- **Redrain with backoff** — when a provider call fails (offline, timeout, rate limit, 5xx), the queued work stays put and processing retries on a jittered exponential backoff (30s up to a 5-minute cap) until it succeeds. Permanent failures (e.g. a bad API key) keep retrying too — one request per tick — so nothing is dropped while you fix the config.
+- **Restart recovery** — on startup the worker reloads any unfinished queue rows and resumes processing them; a session re-created mid-run picks up its own leftover rows automatically.
+- **Context preserved** — the conversation context the memory agent uses is snapshotted at every confirmed turn and restored on recovery, so recovered work is processed with the same context it had before the interruption. Claude SDK sessions resume from their on-disk transcript when it still exists.
+
 ---
 
 ## MCP Search Tools

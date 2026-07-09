@@ -54,6 +54,17 @@ function makeDbManager(): DatabaseManager {
       getPromptNumberFromUserPrompts: () => 1,
       ensureMemorySessionIdRegistered: () => {},
       storeObservations: () => ({ observationIds: [], summaryId: null, createdAtEpoch: 0 }),
+      insertPendingMessage: (() => {
+        let nextId = 1;
+        return () => nextId++;
+      })(),
+      deletePendingMessage: () => {},
+      deletePendingMessagesForSession: () => {},
+      getPersistedPendingMessagesForSession: () => [],
+      getSessionIdsWithPendingMessages: () => [],
+      sessionExists: () => true,
+      saveConversationHistory: () => {},
+      getConversationHistory: () => null,
     }),
     getChromaSync: () => undefined,
   } as unknown as DatabaseManager;

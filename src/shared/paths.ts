@@ -55,6 +55,18 @@ export const OBSERVER_SESSIONS_DIR = join(DATA_DIR, 'observer-sessions');
 
 export const OBSERVER_SESSIONS_PROJECT = basename(OBSERVER_SESSIONS_DIR);
 
+/**
+ * Where the Claude Code SDK persists the observer session's transcript: the
+ * SDK runs with cwd=OBSERVER_SESSIONS_DIR, and Claude Code stores transcripts
+ * under <config>/projects/<cwd slugged with non-alphanumerics → '-'>/<id>.jsonl.
+ * Existence of this file is what makes a memory session resumable across
+ * worker restarts.
+ */
+export function observerSdkTranscriptPath(memorySessionId: string): string {
+  const projectSlug = OBSERVER_SESSIONS_DIR.replace(/[^a-zA-Z0-9]/g, '-');
+  return join(CLAUDE_CONFIG_DIR, 'projects', projectSlug, `${memorySessionId}.jsonl`);
+}
+
 export const CLAUDE_SETTINGS_PATH = join(CLAUDE_CONFIG_DIR, 'settings.json');
 export const CLAUDE_COMMANDS_DIR = join(CLAUDE_CONFIG_DIR, 'commands');
 export const CLAUDE_MD_PATH = join(CLAUDE_CONFIG_DIR, 'CLAUDE.md');

@@ -27,6 +27,8 @@ import { instrument } from '../../../telemetry/instrument.js';
 import { SessionCompletionHandler } from '../../session/SessionCompletionHandler.js';
 import { getUptimeSeconds } from '../../../../shared/uptime.js';
 import { USER_PROMPT_DEDUPE_WINDOW_MS } from '../../../../shared/user-prompts.js';
+import { toError } from '../../../../utils/to-error.js';
+import { computeBackoffMs } from '../../retry.js';
 
 const MAX_USER_PROMPT_BYTES = 256 * 1024;
 
@@ -212,9 +214,51 @@ export class SessionRoutes extends BaseRouteHandler {
           return;
         }
 
-        // No retry: the generator failed, the in-RAM batch is dropped, and the
-        // transcript is the recovery path. The next observation ingest will
-        // start a fresh generator via ensureGeneratorRunning.
+        // Never drop buffered work on a generator failure: un-claim the
+        // in-flight messages and flag the session for redrain — the finally
+        // below preserves the session/buffer and schedules a fresh generator
+        // with backoff instead of tearing the session down. This deliberately
+        // applies to EVERY non-abort failure, permanent ones included (the
+        // queue-everything policy): a dead API key burns one request per
+        // backoff tick until fixed, but never loses work.
+        //
+        // The redrain flag is set before anything fallible runs — if the DB is
+        // degraded (the very scenario redrain exists for), a throw here must
+        // not tear down the buffer.
+        try {
+          await this.sessionManager.resetProcessingToPending(session.sessionDbId);
+        } catch (resetError) {
+          logger.error('SESSION', 'Failed to un-claim in-flight messages before redrain', {
+            sessionId: session.sessionDbId
+          }, toError(resetError));
+        }
+        if (this.sessionManager.getMessageBuffer().getPendingCount(session.sessionDbId) > 0) {
+          session.pendingRedrain = true;
+        }
+
+        // A rejected SDK resume must not loop: clear the memory session id so
+        // the redrain retry starts a fresh SDK session instead of re-attempting
+        // the same dead resume forever.
+        // ponytail: string match on the CLI's error text; if the SDK changes it,
+        // the ceiling is one wasted redrain cycle per backoff tick, not data loss.
+        if (errorMsg.includes('No conversation found')) {
+          logger.warn('SESSION', 'SDK resume rejected — clearing memorySessionId for a fresh start', {
+            sessionId: session.sessionDbId,
+            memorySessionId: session.memorySessionId ?? undefined
+          });
+          session.memorySessionId = null;
+          session.forceInit = true;
+          try {
+            this.dbManager.getSessionStore().updateMemorySessionId(session.sessionDbId, null);
+          } catch (dbError) {
+            // RAM state above already forces a fresh start for this process;
+            // the stale DB id only matters after a restart, where a repeat
+            // rejection lands back here.
+            logger.warn('SESSION', 'Failed to clear memory_session_id in DB after rejected resume', {
+              sessionId: session.sessionDbId
+            }, toError(dbError));
+          }
+        }
         //
         // Single instrumentation call: the local error line (full fidelity)
         // and the scrubbed session_compressed rollup are one logical event.
@@ -266,11 +310,45 @@ export class SessionRoutes extends BaseRouteHandler {
             ide: session.platformSource,
           });
         }
+        const redrain = session.pendingRedrain === true;
+        session.pendingRedrain = false;
         await handleGeneratorExit(session, reason, {
           sessionManager: this.sessionManager,
           completionHandler: this.completionHandler,
-        });
+        }, { preserveForRedrain: redrain });
+        if (redrain) {
+          this.scheduleRedrain(session);
+        }
       });
+  }
+
+  /**
+   * Re-arm processing after a failed generator left work in the buffer:
+   * jittered exponential backoff (30s → 5min cap, via retry.ts), retried
+   * indefinitely — work is never dropped because a provider call failed. The
+   * attempt counter resets whenever a batch is confirmed. If teardown clears
+   * the timer first, the durable rows survive and are reloaded the next time
+   * the session is initialized (or at the next worker restart).
+   */
+  private scheduleRedrain(session: NonNullable<ReturnType<typeof this.sessionManager.getSession>>): void {
+    // One timer at a time; respawnTimer is shared with the poison-respawn
+    // path, whose ensureGeneratorRunning also drains this buffer.
+    if (session.respawnTimer) return;
+    const attempt = session.redrainAttempts = (session.redrainAttempts ?? 0) + 1;
+    const delayMs = computeBackoffMs(attempt - 1, { baseDelayMs: 30_000, maxDelayMs: 300_000 });
+    logger.warn('SESSION', `Redrain scheduled in ${Math.round(delayMs / 1000)}s (attempt ${attempt})`, {
+      sessionId: session.sessionDbId,
+      pending: this.sessionManager.getMessageBuffer().getPendingCount(session.sessionDbId),
+    });
+    session.respawnTimer = setTimeout(() => {
+      session.respawnTimer = undefined;
+      this.ensureGeneratorRunning(session.sessionDbId, 'redrain').catch(error => {
+        logger.error('SESSION', 'Redrain failed to start generator, rescheduling', {
+          sessionId: session.sessionDbId
+        }, toError(error));
+        this.scheduleRedrain(session);
+      });
+    }, delayMs);
   }
 
   setupRoutes(app: express.Application): void {

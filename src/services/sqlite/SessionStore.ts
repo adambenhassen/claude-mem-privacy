@@ -72,6 +72,146 @@ export class SessionStore {
     this.dropDeadPendingMessagesColumns();
     this.ensurePendingMessagesToolUseIdColumn();
     this.dropWorkerPidColumn();
+    this.ensurePendingMessagesAgentColumns();
+    this.ensureSessionsConversationHistoryColumn();
+  }
+
+  /**
+   * conversation_history persists the memory agent's reducer context (the
+   * message history sent to OpenAI-compatible providers) so a restart-recovered
+   * session resumes with the exact context it had at its last confirmed turn,
+   * not a cold start.
+   */
+  private ensureSessionsConversationHistoryColumn(): void {
+    const cols = this.db.query('PRAGMA table_info(sdk_sessions)').all() as TableColumnInfo[];
+    if (!cols.some(c => c.name === 'conversation_history')) {
+      this.db.run('ALTER TABLE sdk_sessions ADD COLUMN conversation_history TEXT');
+    }
+  }
+
+  /** Overwrite (or clear, with null) the persisted reducer context for a session. */
+  saveConversationHistory(sessionDbId: number, historyJson: string | null): void {
+    this.db.prepare('UPDATE sdk_sessions SET conversation_history = ? WHERE id = ?').run(historyJson, sessionDbId);
+  }
+
+  getConversationHistory(sessionDbId: number): string | null {
+    const row = this.db.prepare('SELECT conversation_history FROM sdk_sessions WHERE id = ?').get(sessionDbId) as { conversation_history: string | null } | undefined;
+    return row?.conversation_history ?? null;
+  }
+
+  /** agent_id/agent_type carry subagent attribution across a worker restart. */
+  private ensurePendingMessagesAgentColumns(): void {
+    const cols = this.db.query('PRAGMA table_info(pending_messages)').all() as TableColumnInfo[];
+    const names = new Set(cols.map(c => c.name));
+    if (!names.has('agent_id')) {
+      this.db.run('ALTER TABLE pending_messages ADD COLUMN agent_id TEXT');
+    }
+    if (!names.has('agent_type')) {
+      this.db.run('ALTER TABLE pending_messages ADD COLUMN agent_type TEXT');
+    }
+  }
+
+  /**
+   * Durable mirror of the in-RAM SessionMessageBuffer: a row is inserted on
+   * enqueue and deleted on confirm (successful store), so whatever is in this
+   * table at startup is exactly the work a previous worker run never finished.
+   * Returns the new row id, or 0 when the partial UNIQUE(content_session_id,
+   * tool_use_id) index suppressed the insert as a duplicate.
+   */
+  insertPendingMessage(input: {
+    sessionDbId: number;
+    contentSessionId: string;
+    messageType: 'observation' | 'summarize';
+    toolName?: string;
+    toolInput?: string;
+    toolResponse?: string;
+    cwd?: string;
+    lastAssistantMessage?: string;
+    promptNumber?: number;
+    toolUseId?: string;
+    agentId?: string;
+    agentType?: string;
+  }): number {
+    const res = this.db.prepare(`
+      INSERT OR IGNORE INTO pending_messages
+        (session_db_id, content_session_id, message_type, tool_name, tool_input, tool_response,
+         cwd, last_assistant_message, prompt_number, status, created_at_epoch, tool_use_id, agent_id, agent_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?)
+    `).run(
+      input.sessionDbId,
+      input.contentSessionId,
+      input.messageType,
+      input.toolName ?? null,
+      input.toolInput ?? null,
+      input.toolResponse ?? null,
+      input.cwd ?? null,
+      input.lastAssistantMessage ?? null,
+      input.promptNumber ?? null,
+      Date.now(),
+      input.toolUseId ?? null,
+      input.agentId ?? null,
+      input.agentType ?? null
+    );
+    if (res.changes > 0) {
+      return Number(res.lastInsertRowid);
+    }
+    // OR IGNORE swallows every constraint failure. Only the tool_use_id
+    // duplicate is expected — verify it is one, so an FK violation (session row
+    // gone) fails loud instead of silently dropping a new message as a "dup".
+    const dup = input.toolUseId
+      ? this.db.prepare(
+          'SELECT 1 FROM pending_messages WHERE content_session_id = ? AND tool_use_id = ?'
+        ).get(input.contentSessionId, input.toolUseId)
+      : null;
+    if (!dup) {
+      throw new Error(`pending_messages insert ignored without a duplicate (sessionDbId=${input.sessionDbId}, type=${input.messageType})`);
+    }
+    return 0;
+  }
+
+  deletePendingMessage(id: number): void {
+    this.db.prepare('DELETE FROM pending_messages WHERE id = ?').run(id);
+  }
+
+  deletePendingMessagesForSession(sessionDbId: number): void {
+    this.db.prepare('DELETE FROM pending_messages WHERE session_db_id = ?').run(sessionDbId);
+  }
+
+  /** Distinct sessions that still have unfinished rows from previous runs. Status is ignored: a 'processing' row from a dead worker is unconfirmed work. */
+  getSessionIdsWithPendingMessages(): number[] {
+    const rows = this.db.prepare(
+      'SELECT DISTINCT session_db_id FROM pending_messages ORDER BY session_db_id'
+    ).all() as Array<{ session_db_id: number }>;
+    return rows.map(r => r.session_db_id);
+  }
+
+  /** Unfinished durable rows for one session, oldest first. */
+  getPersistedPendingMessagesForSession(sessionDbId: number): Array<{
+    id: number;
+    session_db_id: number;
+    message_type: string;
+    tool_name: string | null;
+    tool_input: string | null;
+    tool_response: string | null;
+    cwd: string | null;
+    last_assistant_message: string | null;
+    prompt_number: number | null;
+    tool_use_id: string | null;
+    agent_id: string | null;
+    agent_type: string | null;
+    created_at_epoch: number;
+  }> {
+    return this.db.prepare(`
+      SELECT id, session_db_id, message_type, tool_name, tool_input, tool_response,
+             cwd, last_assistant_message, prompt_number, tool_use_id, agent_id, agent_type, created_at_epoch
+        FROM pending_messages
+       WHERE session_db_id = ?
+       ORDER BY id ASC
+    `).all(sessionDbId) as ReturnType<SessionStore['getPersistedPendingMessagesForSession']>;
+  }
+
+  sessionExists(sessionDbId: number): boolean {
+    return this.db.prepare('SELECT 1 FROM sdk_sessions WHERE id = ?').get(sessionDbId) !== null;
   }
 
   private dropWorkerPidColumn(): void {

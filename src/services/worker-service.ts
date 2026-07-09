@@ -200,6 +200,7 @@ export class WorkerService implements WorkerRef {
   private settingsManager: SettingsManager;
   private sessionEventBroadcaster: SessionEventBroadcaster;
   private completionHandler: SessionCompletionHandler;
+  private sessionRoutes?: SessionRoutes;
   private corpusStore: CorpusStore;
 
   private searchRoutes: SearchRoutes | null = null;
@@ -330,6 +331,7 @@ export class WorkerService implements WorkerRef {
 
     this.server.registerRoutes(new ViewerRoutes(this.sseBroadcaster, this.dbManager, this.sessionManager));
     const sessionRoutes = new SessionRoutes(this.sessionManager, this.dbManager, this.sdkAgent, this.geminiAgent, this.openRouterAgent, this.customAgent, this.sessionEventBroadcaster, this, this.completionHandler);
+    this.sessionRoutes = sessionRoutes;
     this.server.registerRoutes(sessionRoutes);
     attachIngestGeneratorStarter((sessionDbId, source) =>
       sessionRoutes.ensureGeneratorRunning(sessionDbId, source),
@@ -518,6 +520,33 @@ export class WorkerService implements WorkerRef {
       this.initializationCompleteFlag = true;
       this.resolveInitialization();
       logger.info('SYSTEM', 'Core initialization complete (DB + search ready)');
+
+      // Reprocess work a previous worker run never finished (crash, offline
+      // shutdown): reload unconfirmed pending_messages rows and start a
+      // generator per recovered session. One-shot sweep; failures of a
+      // *running* generator are then handled by the backoff redrain. If
+      // ensureGeneratorRunning itself rejects here (e.g. provider
+      // misconfigured at boot), the rows stay durable and are retried on the
+      // next worker restart or the session's next ingest — not before.
+      try {
+        const recovered = this.sessionManager.recoverPersistedMessages();
+        if (recovered.length > 0 && !this.sessionRoutes) {
+          // Init-order regression guard: recovery without routes would strand
+          // every rehydrated buffer with no generator. Fail loud.
+          logger.error('SYSTEM', 'Recovery sweep ran before SessionRoutes was registered — recovered sessions will not drain until restart', {
+            sessions: recovered.length
+          });
+        }
+        for (const sessionDbId of recovered) {
+          this.sessionRoutes?.ensureGeneratorRunning(sessionDbId, 'startup-recovery').catch(error => {
+            logger.error('SESSION', 'Startup recovery failed to start generator', { sessionId: sessionDbId },
+              error instanceof Error ? error : new Error(String(error)));
+          });
+        }
+      } catch (error) {
+        logger.error('SYSTEM', 'Pending-message recovery sweep failed', {},
+          error instanceof Error ? error : new Error(String(error)));
+      }
 
       // Lifecycle telemetry (person profile = anonymous install UUID). ide is
       // this install's dominant client read from session history — a bounded
