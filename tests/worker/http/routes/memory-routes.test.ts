@@ -1,10 +1,8 @@
 
 import { describe, it, expect, mock, beforeEach, afterEach, spyOn } from 'bun:test';
 import type { Request, Response } from 'express';
-import { EventEmitter } from 'node:events';
 import { logger } from '../../../../src/utils/logger.js';
 import { SettingsDefaultsManager } from '../../../../src/shared/SettingsDefaultsManager.js';
-import { PresidioManager } from '../../../../src/services/redaction/PresidioManager.js';
 
 mock.module('../../../../src/shared/paths.js', () => ({
   getPackageRoot: () => '/tmp/test',
@@ -17,28 +15,6 @@ import { MemoryRoutes } from '../../../../src/services/worker/http/routes/Memory
 
 let loggerSpies: ReturnType<typeof spyOn>[] = [];
 const PAT = 'ghp_' + '0'.repeat(36);
-
-// Fake Presidio sidecar: redacts the literal "Jane Smith" -> PERSON. Used only
-// by the deep-PII test; other tests run with Presidio off (the suite default).
-class FakeChild extends EventEmitter {
-  pid = 999999999;
-  stdout = new EventEmitter();
-  stderr = new EventEmitter();
-  stdin = {
-    write: (line: string) => {
-      try {
-        const req = JSON.parse(line);
-        const text = String(req.text).replace(/Jane Smith/g, '[REDACTED:PERSON]');
-        const counts = text !== String(req.text) ? { PERSON: 1 } : {};
-        queueMicrotask(() => this.stdout.emit('data', Buffer.from(JSON.stringify({ id: req.id, text, counts }) + '\n')));
-      } catch { /* ignore */ }
-      return true;
-    },
-    end: () => {},
-    on: () => {},
-  };
-  emitReady() { this.stdout.emit('data', Buffer.from(JSON.stringify({ ready: true }) + '\n')); }
-}
 
 function createMockReqRes(body: any): { req: Partial<Request>; res: Partial<Response>; jsonSpy: ReturnType<typeof mock>; statusSpy: ReturnType<typeof mock> } {
   const jsonSpy = mock(() => {});
@@ -110,7 +86,6 @@ describe('MemoryRoutes — POST /api/memory/save (#2116)', () => {
 
   afterEach(() => {
     loggerSpies.forEach(spy => spy.mockRestore());
-    PresidioManager.__setSpawn(null);
     mock.restore();
   });
 
@@ -215,25 +190,4 @@ describe('MemoryRoutes — POST /api/memory/save (#2116)', () => {
     expect(responsePayload.title).toContain('[REDACTED:GITHUB_PAT]');
   });
 
-  it('applies the Presidio NER pass to stored free-form PII when enabled', async () => {
-    const settingsSpy = spyOn(SettingsDefaultsManager, 'loadFromFile').mockImplementation(
-      () => ({ ...SettingsDefaultsManager.getAllDefaults(), CLAUDE_MEM_REDACTION_PRESIDIO_ENABLED: 'true' }) as any
-    );
-    PresidioManager.resetInstance();
-    PresidioManager.__setSpawn(() => {
-      const child = new FakeChild();
-      queueMicrotask(() => child.emitReady());
-      return child as any;
-    });
-
-    const handler = buildHandler();
-    const { req, res } = createMockReqRes({ text: 'pairing with Jane Smith on the parser' });
-    await handler(req as Request, res as Response);
-
-    const observationArg = storeObservationCalls[0][2];
-    expect(observationArg.narrative).not.toContain('Jane Smith');
-    expect(observationArg.narrative).toContain('[REDACTED:PERSON]');
-
-    settingsSpy.mockRestore();
-  });
 });

@@ -546,11 +546,11 @@ export class SessionRoutes extends BaseRouteHandler {
 
     const store = this.dbManager.getSessionStore();
 
-    // Strip claude-mem's injected memory context, then deep-redact the user's
-    // actual prompt text ONCE. Reused for the session row, the dedup lookup, and
-    // the stored user_prompts row, so every SQLite copy holds redacted text —
-    // and we avoid running Presidio over the (already-redacted, often large)
-    // injected context block on the hot per-submit path.
+    // Strip claude-mem's injected memory context, then redact the user's actual
+    // prompt text ONCE. Reused for the session row, the dedup lookup, and the
+    // stored user_prompts row, so every SQLite copy holds redacted text — and we
+    // avoid re-redacting the (already-redacted, often large) injected context
+    // block on the hot per-submit path.
     const cleanedPrompt = stripMemoryTagsFromPrompt(prompt);
     const safeCleanedPrompt = cleanedPrompt
       ? await redactTextDeep(cleanedPrompt, { project, surface: 'sqlite' })

@@ -53,9 +53,8 @@ export class MemoryRoutes extends BaseRouteHandler {
       metadata: metadata ? JSON.stringify(metadata) : null,
     };
 
-    // Deep-redact (regex + Presidio NER) BEFORE persistence so SQLite, Chroma,
-    // AND the HTTP response below all carry the redacted text — never the raw
-    // user input.
+    // Redact BEFORE persistence so SQLite, Chroma, AND the HTTP response below
+    // all carry the redacted text — never the raw user input.
     const observation = await redactFieldsDeep(
       rawObservation,
       ['title', 'subtitle', 'narrative', 'facts', 'concepts', 'metadata'],

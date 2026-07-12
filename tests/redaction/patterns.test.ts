@@ -52,6 +52,32 @@ describe('STATIC_RULES secrets', () => {
     }
   });
 
+  it('redacts prefixed/camelCase secret keys and opaque JSON tokens', () => {
+    const cases = [
+      'TunnelSecret: aGVsbG8xMjM0NTY3OA==',
+      'CF_TUNNEL_TOKEN: c29tZXZhbHVlMTIz',
+      'TOTP_ENCRYPTION_KEY=abcdef1234567890',
+      'API_NINJAS_KEY: qwerty123456',
+    ];
+    for (const input of cases) {
+      const out = redactWith(input);
+      expect(out).toContain('[REDACTED:SECRET]');
+    }
+    expect(redactWith('eyJhIjoiYWJjIiwidCI6ImRlZiJ9xxxxxxxx')).toContain('[REDACTED:B64_JSON]');
+    expect(redactWith('gsk_' + 'a'.repeat(20))).toContain('[REDACTED:GROQ_KEY]');
+    expect(redactWith('0x4AAAAAAABBBBccccDDDD')).toContain('[REDACTED:TURNSTILE_KEY]');
+  });
+
+  it('redacts base64-encoded PEM and JWT (kubeconfig / k8s secret dumps)', () => {
+    const b64pem = 'LS0tLS1CRUdJTi' + 'A'.repeat(60);
+    const b64jwt = 'ZXlK' + 'B'.repeat(60);
+    const out = redactWith(`client-key-data: ${b64pem}\ntoken: ${b64jwt}`);
+    expect(out).toContain('[REDACTED:B64_PEM]');
+    expect(out).toContain('[REDACTED:B64_JWT]');
+    expect(out).not.toContain(b64pem);
+    expect(out).not.toContain(b64jwt);
+  });
+
   it('does NOT redact env-var names or placeholders', () => {
     expect(redactWith('DATABASE_PASSWORD')).toBe('DATABASE_PASSWORD');
     expect(redactWith('api_key = YOUR_API_KEY')).toBe('api_key = YOUR_API_KEY');
@@ -76,6 +102,30 @@ describe('STATIC_RULES secrets', () => {
       '9a1b2c3d4e5f60718293a4b5c6d7e8f901234567'
     );
     expect(redactWith('192.0.2.40')).toBe('192.0.2.40');
+  });
+
+  it('high-entropy catch-all redacts unknown mixed-alphabet secrets', () => {
+    for (const tok of [
+      'aB3xK9mQ2pL7vR4nT6wZ1yD8sF5gH0jUc',   // random base64url token
+      'Xk92LmPq47zRtY3wNv8bQd1sHf6gKj0AeI',   // another
+    ]) {
+      const out = redactWith(`token ${tok}`);
+      expect(out).toContain('[REDACTED:HIGH_ENTROPY]');
+      expect(out).not.toContain(tok);
+    }
+  });
+
+  it('high-entropy catch-all leaves SHAs, UUIDs, all-caps, and words alone', () => {
+    const survivors = [
+      '9a1b2c3d4e5f60718293a4b5c6d7e8f901234567',  // 40-char lowercase-hex git SHA
+      'A1B2C3D4E5F60718293A4B5C6D7E8F9012345678',  // uppercase-hex (single case)
+      '550e8400-e29b-41d4-a716-446655440000',      // UUID (single case + dashes)
+      'DATABASE_CONNECTION_STRING_VALUE',          // ALL_CAPS env name (no lowercase)
+      'getUserProfileByAccountIdentifier',         // camelCase identifier (no digit)
+    ];
+    for (const s of survivors) {
+      expect(redactWith(s)).toBe(s);
+    }
   });
 });
 

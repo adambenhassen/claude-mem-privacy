@@ -3,6 +3,8 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'fs';
 import { join } from 'path';
 import { paths } from '../shared/paths.js';
 import { emitDiagnostic } from '../shared/hook-io.js';
+import { redact } from '../shared/redaction/redactor.js';
+import { resolveRedactionConfig, type RedactionConfig } from '../shared/redaction/config.js';
 
 export enum LogLevel {
   DEBUG = 0,
@@ -151,6 +153,27 @@ class Logger {
   }
 
   formatTool(toolName: string, toolInput?: any): string {
+    return this.redactForLog(this.formatToolRaw(toolName, toolInput));
+  }
+
+  /**
+   * Log lines carry raw tool args (commands, paths, queries) which can contain
+   * secrets, so everything formatTool emits passes through the sync regex
+   * redactor. Config is resolved once per process — log-line redaction may lag
+   * a settings change until restart, which is fine for a local log. Fails
+   * closed: a redactor error yields a placeholder, never the raw string.
+   */
+  private redactionConfig: RedactionConfig | null = null;
+  private redactForLog(text: string): string {
+    try {
+      this.redactionConfig ??= resolveRedactionConfig();
+      return redact(text, { config: this.redactionConfig }).text;
+    } catch {
+      return '[LOG_REDACTION_FAILED]';
+    }
+  }
+
+  private formatToolRaw(toolName: string, toolInput?: any): string {
     if (!toolInput) return toolName;
 
     let input = toolInput;

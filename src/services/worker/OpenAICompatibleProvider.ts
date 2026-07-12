@@ -90,10 +90,10 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
   protected prepareSessionExtras(_session: ActiveSession, _config: TConfig): void {}
 
   /**
-   * Optional ML PII pass applied to each outgoing user prompt at the send
-   * boundary (these are OpenAI-compatible free gateways — the leak threat).
-   * The regex core already ran inside the prompt builders; this adds Presidio
-   * NER when enabled and is a no-op (returns input) otherwise.
+   * Redaction pass applied to each outgoing user prompt at the send boundary
+   * (these are OpenAI-compatible free gateways — the leak threat). The regex
+   * core already ran inside the prompt builders, so this is currently a no-op
+   * wrapper, kept as the seam where a stronger send-boundary pass would attach.
    */
   protected deepRedact(content: string, project?: string): Promise<string> {
     return redactForLLMDeep(content, { project });

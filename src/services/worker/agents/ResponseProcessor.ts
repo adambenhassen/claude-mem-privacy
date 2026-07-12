@@ -160,10 +160,8 @@ export async function processAgentResponse(
     if (Array.isArray(o.files_read)) rawFilePaths.push(...o.files_read);
   }
 
-  // Deep-redact (regex + Presidio NER) before persistence. For OpenAI-compatible
-  // providers the LLM input was already deep-redacted upstream so this is largely
-  // idempotent; for the Claude provider (no upstream deep pass) it's the only NER
-  // layer over generated content. Chroma redacts itself on sync. file paths are
+  // Redact (regex secret/PII pass) before persistence. Idempotent with the
+  // upstream send-boundary pass. Chroma redacts itself on sync. file paths are
   // redacted too (home dirs / client names are PII) for every persisted/egress
   // surface — the folder writer above keeps the raw paths.
   const safeObservations = await Promise.all(labeledObservations.map(o =>

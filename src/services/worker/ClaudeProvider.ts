@@ -566,9 +566,9 @@ export class ClaudeProvider {
   }
 
   /**
-   * ML PII pass applied to each prompt at the SDK send boundary, mirroring
+   * Redaction pass applied to each prompt at the SDK send boundary, mirroring
    * OpenAICompatibleProvider. The regex core already ran inside the prompt
-   * builders; this adds Presidio NER when enabled and is a no-op otherwise.
+   * builders, so this is currently a no-op wrapper kept as the send-boundary seam.
    */
   private deepRedact(content: string, project: string): Promise<string> {
     return redactForLLMDeep(content, { project });

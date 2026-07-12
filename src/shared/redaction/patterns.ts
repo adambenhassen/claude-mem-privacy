@@ -52,7 +52,7 @@ export interface Rule {
  */
 // Case-insensitive literal placeholders + ${VAR} references.
 const PLACEHOLDER_CI =
-  /^(?:your[_-]?\w*|changeme|your-key-here|example\w*|x{3,}|<[^>]*>|\$\{?\w+\}?)$/i;
+  /^(?:your[_-]?\w*|changeme|your-key-here|example\w*|x{3,}|<[^>]*>|\$\{?\w+\}?|\[redacted:\w+\])$/i;
 // ALL_CAPS env-var identifier — MUST be case-sensitive, otherwise a lowercase
 // secret like `supersecret` would be mistaken for an env name and skipped.
 const ENV_NAME = /^[A-Z][A-Z0-9_]{2,}$/;
@@ -88,6 +88,43 @@ function ibanChecksumValid(raw: string): boolean {
     for (const d of value) remainder = (remainder * 10 + (d.charCodeAt(0) - 48)) % 97;
   }
   return remainder === 1;
+}
+
+/** Shannon entropy in bits/char over the token's symbol distribution. */
+export function shannonEntropy(s: string): number {
+  if (!s) return 0;
+  const freq: Record<string, number> = {};
+  for (const ch of s) freq[ch] = (freq[ch] ?? 0) + 1;
+  let bits = 0;
+  for (const c of Object.values(freq)) {
+    const p = c / s.length;
+    bits -= p * Math.log2(p);
+  }
+  return bits;
+}
+
+/**
+ * Catch-all for opaque secrets we have no specific pattern for (the whack-a-mole
+ * gap: an unknown token format leaks until someone writes a rule). Redacts a
+ * base64url-ish run only when it looks random rather than like an identifier,
+ * path, hash, or word.
+ *
+ * The mixed-alphabet gate (needs upper AND lower AND digit) is the load-bearing
+ * discriminator: it lets single-case tokens through untouched, which is what
+ * keeps git commit SHAs and UUIDs (lowercase/uppercase hex) safe — the file's
+ * "must survive" invariant. Entropy then rejects repetitive mixed strings.
+ *
+ * ponytail: known ceiling — a mixed-case identifier with a digit and >=20 chars
+ * (e.g. `md5HashHelperVersion2Impl`) can be over-redacted, and a secret that is
+ * single-case (lowercase-hex API key) slips through. Recall-over-precision is
+ * deliberate for a privacy filter; tighten the threshold if noise shows up.
+ */
+export function isHighEntropySecret(token: string): boolean {
+  if (token.length < 20) return false;
+  if (/^REDACTED/.test(token)) return false;
+  if (!(/[a-z]/.test(token) && /[A-Z]/.test(token) && /[0-9]/.test(token))) return false;
+  if (isPlaceholderValue(token)) return false;
+  return shannonEntropy(token) >= 3.0;
 }
 
 /** Luhn checksum for credit-card validation. Accepts spaces/dashes. */
@@ -145,6 +182,29 @@ export const STATIC_RULES: Rule[] = [
     label: 'JWT',
     regex: /\beyJ[A-Za-z0-9_-]{3,4096}\.eyJ[A-Za-z0-9_-]{3,4096}\.[A-Za-z0-9_-]{3,4096}/g,
   },
+  // Dot-less base64 blob that decodes to JSON (`eyJ` = base64 of `{"`): the
+  // shape of cloudflared tunnel tokens and other opaque JSON credentials.
+  // Runs after the JWT rule so real JWTs get the more specific label.
+  {
+    category: 'SECRETS',
+    label: 'B64_JSON',
+    regex: /\beyJ[A-Za-z0-9+/=_-]{20,}/g,
+  },
+
+  // --- base64-encoded secrets (kubeconfig client-key/cert-data, k8s Secret data:) ---
+  // LS0tLS1CRUdJTi = base64("-----BEGIN"), ZXlK = base64("eyJ"): the encoded
+  // forms of PEM blocks and JWTs, which is how kubeconfig dumps and
+  // `kubectl get secret -o yaml` output carry keys, certs, and SA tokens.
+  {
+    category: 'SECRETS',
+    label: 'B64_PEM',
+    regex: /\bLS0tLS1CRUdJTi[A-Za-z0-9+/=]{40,}/g,
+  },
+  {
+    category: 'SECRETS',
+    label: 'B64_JWT',
+    regex: /\bZXlK[A-Za-z0-9+/=]{40,}/g,
+  },
 
   // --- specific provider prefixes (before generic sk-) ---
   { category: 'SECRETS', label: 'ANTHROPIC_KEY', regex: /\bsk-ant-[A-Za-z0-9_-]{8,}/g },
@@ -163,6 +223,10 @@ export const STATIC_RULES: Rule[] = [
   { category: 'SECRETS', label: 'SLACK_TOKEN', regex: /\bxox[baprs]-[A-Za-z0-9-]{8,}/g },
   { category: 'SECRETS', label: 'STRIPE_KEY', regex: /\b(?:sk|rk|pk)_(?:live|test)_[A-Za-z0-9]{8,}/g },
   { category: 'SECRETS', label: 'SENDGRID_KEY', regex: /\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}/g },
+  { category: 'SECRETS', label: 'GROQ_KEY', regex: /\bgsk_[A-Za-z0-9]{16,}/g },
+  // Cloudflare Turnstile site+secret keys share the 0x4AAA prefix; site keys
+  // are public but redacting both is harmless.
+  { category: 'SECRETS', label: 'TURNSTILE_KEY', regex: /\b0x4AAA[A-Za-z0-9_-]{8,}/g },
   { category: 'SECRETS', label: 'HUGGINGFACE_TOKEN', regex: /\bhf_[A-Za-z0-9]{16,}/g },
   { category: 'SECRETS', label: 'REPLICATE_TOKEN', regex: /\br8_[A-Za-z0-9]{16,}/g },
   { category: 'SECRETS', label: 'DIGITALOCEAN_TOKEN', regex: /\bdop_v1_[A-Za-z0-9]{32,}/g },
@@ -184,7 +248,11 @@ export const STATIC_RULES: Rule[] = [
   {
     category: 'SECRETS',
     label: 'SECRET',
-    regex: /\b(password|passwd|secret|api[_-]?key|access[_-]?key|client[_-]?secret|auth[_-]?token)(\s*[:=]\s*)(?:"([^"]{1,200})"|'([^']{1,200})'|([^\s"']{8,200}))/gi,
+    // Optional \w prefix so prefixed/camelCase keys match too: TunnelSecret,
+    // CF_TUNNEL_TOKEN, TOTP_ENCRYPTION_KEY, API_NINJAS_KEY. The trailing
+    // `[_-]key` alternative catches any *_KEY assignment; `foreign_key = x`
+    // style false positives are accepted — recall beats precision here.
+    regex: /\b(\w{0,32}(?:password|passwd|secret|token|api[_-]?key|access[_-]?key|encryption[_-]?key|signing[_-]?key|[_-]key))(\s*[:=]\s*)(?:"([^"]{1,200})"|'([^']{1,200})'|([^\s"']{8,200}))/gi,
     replace: (m, key, sep, dq, sq, bare) => {
       const val = dq ?? sq ?? bare ?? '';
       const quoted = dq !== undefined || sq !== undefined;
@@ -244,5 +312,13 @@ export const STATIC_RULES: Rule[] = [
     category: 'GEO',
     label: 'GEO_COORD',
     regex: /\b[-+]?(?:90(?:\.0+)?|[0-8]?\d\.\d{3,}),\s*[-+]?(?:180(?:\.0+)?|1[0-7]\d\.\d{3,}|\d?\d\.\d{3,})\b/g,
+  },
+
+  // --- high-entropy catch-all (LAST: specific labels win; skips REDACTED runs) ---
+  {
+    category: 'SECRETS',
+    label: 'HIGH_ENTROPY',
+    regex: /[A-Za-z0-9_-]{20,}/g,
+    replace: (m: string) => (isHighEntropySecret(m) ? '[REDACTED:HIGH_ENTROPY]' : m),
   },
 ];

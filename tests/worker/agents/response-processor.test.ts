@@ -596,13 +596,10 @@ describe('ResponseProcessor', () => {
   describe('file-path redaction (#2)', () => {
     const TOKEN = 'ghp_' + '0'.repeat(36);
 
-    // Presidio NER is irrelevant to these regex-secret assertions and would spawn
-    // a sidecar; disable it (and keep the folder-CLAUDE.md feature off by default).
     function settingsWith(over: Record<string, string> = {}) {
       return spyOn(SettingsDefaultsManager, 'loadFromFile').mockImplementation(
         () => ({
           ...SettingsDefaultsManager.getAllDefaults(),
-          CLAUDE_MEM_REDACTION_PRESIDIO_ENABLED: 'false',
           ...over,
         }) as any
       );

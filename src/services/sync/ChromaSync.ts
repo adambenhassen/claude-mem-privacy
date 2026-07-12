@@ -233,7 +233,7 @@ export class ChromaSync {
     }
 
     // Last-line-of-defense redaction before anything reaches the vector index:
-    // the regex secret pass plus the Presidio NER pass for free-form PII.
+    // the regex secret/PII pass before documents are written.
     // Idempotent: content stored via already-redacted SQLite rows stays clean.
     const project = typeof documents[0]?.metadata?.project === 'string'
       ? (documents[0].metadata.project as string)

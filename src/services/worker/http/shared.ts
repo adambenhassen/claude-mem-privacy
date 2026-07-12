@@ -6,7 +6,7 @@ import type { SessionEventBroadcaster } from '../events/SessionEventBroadcaster.
 import type { ParsedSummary } from '../../../sdk/parser.js';
 import { stripMemoryTagsFromJson } from '../../../utils/tag-stripping.js';
 import { redactText } from '../../../shared/redaction/index.js';
-import { isProjectExcluded, isProjectAllowed } from '../../../utils/project-filter.js';
+import { isProjectExcluded, isProjectAllowed, matchesAnyGlob } from '../../../utils/project-filter.js';
 import { SettingsDefaultsManager } from '../../../shared/SettingsDefaultsManager.js';
 import { USER_SETTINGS_PATH } from '../../../shared/paths.js';
 import { getProjectContext } from '../../../utils/project-name.js';
@@ -80,6 +80,36 @@ export async function ingestObservation(payload: ObservationPayload): Promise<In
     return { ok: true, status: 'skipped', reason: 'tool_excluded' };
   }
 
+  // Privacy filter: drop shell observations whose command mentions a skip-listed
+  // binary (e.g. ssh, kubectl). Word-boundary match, so `grep ssh` over-skips —
+  // deliberate: for a privacy filter, recall beats precision.
+  const skipCommands = settings.CLAUDE_MEM_SKIP_COMMANDS
+    .split(',').map(c => c.trim()).filter(Boolean);
+  if (skipCommands.length && payload.toolInput && typeof payload.toolInput === 'object') {
+    const command = (payload.toolInput as { command?: unknown }).command;
+    if (typeof command === 'string') {
+      const pattern = new RegExp(
+        `\\b(?:${skipCommands.map(c => c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')})\\b`
+      );
+      if (pattern.test(command)) {
+        return { ok: true, status: 'skipped', reason: 'command_excluded' };
+      }
+    }
+  }
+
+  // Privacy filter: drop file-tool observations touching a skip-listed path
+  // (e.g. **/.env*, ~/.ssh/**). Same glob semantics as project allow/exclude.
+  const skipPaths = settings.CLAUDE_MEM_SKIP_PATHS
+    .split(',').map(p => p.trim()).filter(Boolean);
+  if (skipPaths.length && payload.toolInput && typeof payload.toolInput === 'object') {
+    const input = payload.toolInput as { file_path?: unknown; notebook_path?: unknown; path?: unknown };
+    for (const candidate of [input.file_path, input.notebook_path, input.path]) {
+      if (typeof candidate === 'string' && candidate && matchesAnyGlob(candidate, skipPaths)) {
+        return { ok: true, status: 'skipped', reason: 'path_excluded' };
+      }
+    }
+  }
+
   const fileOperationTools = new Set(['Edit', 'Write', 'Read', 'NotebookEdit']);
   if (fileOperationTools.has(payload.toolName) && payload.toolInput && typeof payload.toolInput === 'object') {
     const input = payload.toolInput as { file_path?: string; notebook_path?: string };
@@ -118,9 +148,7 @@ export async function ingestObservation(payload: ObservationPayload): Promise<In
   }
 
   // Regex-redact before the raw tool payload lands in the pending_messages
-  // queue, so secrets are never at rest there. (Names/locations get the Presidio
-  // pass later when observations are generated; the per-tool ML cost isn't worth
-  // paying on this transient queue.)
+  // queue, so secrets are never at rest there.
   const cleanedToolInput = payload.toolInput !== undefined
     ? redactText(stripMemoryTagsFromJson(JSON.stringify(payload.toolInput)), { project, surface: 'queue' })
     : '{}';

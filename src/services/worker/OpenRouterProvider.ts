@@ -292,7 +292,14 @@ export class OpenRouterProvider extends OpenAICompatibleProvider<OpenRouterConfi
       }
 
       return responseData;
-    }, { label: `${label} ${model}` });
+    }, {
+      label: `${label} ${model}`,
+      // Free/oversubscribed models with 50k+ token contexts routinely take
+      // over 30s to first byte; the default per-attempt timeout self-aborts
+      // every attempt. Slow backoff so retries don't rejoin the stampede.
+      perAttemptTimeoutMs: 120_000,
+      baseDelayMs: 2_000,
+    });
 
     if (!data.choices?.[0]?.message?.content) {
       logger.error('SDK', `Empty response from ${label}`);
