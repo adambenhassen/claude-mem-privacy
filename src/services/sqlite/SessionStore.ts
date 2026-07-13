@@ -987,14 +987,23 @@ export class SessionStore {
     const columns = this.db.query('PRAGMA table_info(observations)').all() as TableColumnInfo[];
     const hasGeneratedByModel = columns.some(col => col.name === 'generated_by_model');
     const hasRelevanceCount = columns.some(col => col.name === 'relevance_count');
+    const hasObsProvider = columns.some(col => col.name === 'generated_by_provider');
+    const summaryColumns = this.db.query('PRAGMA table_info(session_summaries)').all() as TableColumnInfo[];
+    const hasSummaryProvider = summaryColumns.some(col => col.name === 'generated_by_provider');
 
-    if (hasGeneratedByModel && hasRelevanceCount) return;
+    if (hasGeneratedByModel && hasRelevanceCount && hasObsProvider && hasSummaryProvider) return;
 
     if (!hasGeneratedByModel) {
       this.db.run('ALTER TABLE observations ADD COLUMN generated_by_model TEXT');
     }
     if (!hasRelevanceCount) {
       this.db.run('ALTER TABLE observations ADD COLUMN relevance_count INTEGER DEFAULT 0');
+    }
+    if (!hasObsProvider) {
+      this.db.run('ALTER TABLE observations ADD COLUMN generated_by_provider TEXT');
+    }
+    if (!hasSummaryProvider) {
+      this.db.run('ALTER TABLE session_summaries ADD COLUMN generated_by_provider TEXT');
     }
 
     this.db.prepare('INSERT OR IGNORE INTO schema_versions (version, applied_at) VALUES (?, ?)').run(26, new Date().toISOString());
@@ -2072,7 +2081,8 @@ export class SessionStore {
     promptNumber?: number,
     discoveryTokens: number = 0,
     overrideTimestampEpoch?: number,
-    generatedByModel?: string
+    generatedByModel?: string,
+    generatedByProvider?: string
   ): { observationIds: number[]; summaryId: number | null; createdAtEpoch: number } {
     const timestampEpoch = overrideTimestampEpoch ?? Date.now();
     const timestampIso = new Date(timestampEpoch).toISOString();
@@ -2084,8 +2094,8 @@ export class SessionStore {
         INSERT INTO observations
         (memory_session_id, project, type, title, subtitle, facts, narrative, concepts,
          files_read, files_modified, prompt_number, discovery_tokens, agent_type, agent_id, content_hash, created_at, created_at_epoch,
-         generated_by_model)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         generated_by_model, generated_by_provider)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(memory_session_id, content_hash) DO NOTHING
         RETURNING id
       `);
@@ -2114,7 +2124,8 @@ export class SessionStore {
           contentHash,
           timestampIso,
           timestampEpoch,
-          generatedByModel || null
+          generatedByModel || null,
+          generatedByProvider || null
         ) as { id: number } | null;
 
         if (inserted) {
@@ -2137,8 +2148,9 @@ export class SessionStore {
         const summaryStmt = this.db.prepare(`
           INSERT INTO session_summaries
           (memory_session_id, project, request, investigated, learned, completed,
-           next_steps, notes, prompt_number, discovery_tokens, created_at, created_at_epoch)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+           next_steps, notes, prompt_number, discovery_tokens, created_at, created_at_epoch,
+           generated_by_provider)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `);
 
         const result = summaryStmt.run(
@@ -2153,7 +2165,8 @@ export class SessionStore {
           promptNumber || null,
           discoveryTokens,
           timestampIso,
-          timestampEpoch
+          timestampEpoch,
+          generatedByProvider || null
         );
         summaryId = Number(result.lastInsertRowid);
       }

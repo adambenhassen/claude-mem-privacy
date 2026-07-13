@@ -39,7 +39,7 @@ export function useSettings() {
       // them back untouched would block saving unrelated settings.
       const changed: Record<string, string> = {};
       for (const [key, value] of Object.entries(newSettings)) {
-        if (value !== (settings as Record<string, unknown>)[key]) changed[key] = value as string;
+        if (value !== (settings as unknown as Record<string, unknown>)[key]) changed[key] = value as string;
       }
       const response = await authFetch(API_ENDPOINTS.SETTINGS, {
         method: 'POST',

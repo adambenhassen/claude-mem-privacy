@@ -143,6 +143,7 @@ export interface Observation {
   files_read: string | null;
   files_modified: string | null;
   prompt_number: number;
+  generated_by_provider: string | null;
   created_at: string;
   created_at_epoch: number;
 }
@@ -158,6 +159,7 @@ export interface Summary {
   completed: string | null;
   next_steps: string | null;
   notes: string | null;
+  generated_by_provider: string | null;
   created_at: string;
   created_at_epoch: number;
 }

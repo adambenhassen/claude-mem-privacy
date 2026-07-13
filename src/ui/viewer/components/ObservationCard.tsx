@@ -48,6 +48,11 @@ export function ObservationCard({ observation }: ObservationCardProps) {
           <span className={`card-source source-${observation.platform_source || 'claude'}`}>
             {observation.platform_source || 'claude'}
           </span>
+          {observation.generated_by_provider && (
+            <span className={`card-provider provider-${observation.generated_by_provider}`} title="Provider that generated this observation">
+              {observation.generated_by_provider}
+            </span>
+          )}
           <span className="card-project">{observation.project}</span>
           {observation.merged_into_project && (
             <span className="card-merged-badge" title={`Merged into ${observation.merged_into_project}`}>

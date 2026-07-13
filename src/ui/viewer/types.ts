@@ -14,6 +14,7 @@ export interface Observation {
   files_read: string | null;
   files_modified: string | null;
   prompt_number: number | null;
+  generated_by_provider?: string | null;
   created_at: string;
   created_at_epoch: number;
 }
@@ -28,6 +29,7 @@ export interface Summary {
   learned?: string;
   completed?: string;
   next_steps?: string;
+  generated_by_provider?: string | null;
   created_at_epoch: number;
 }
 

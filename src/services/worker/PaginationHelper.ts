@@ -71,6 +71,7 @@ export class PaginationHelper {
         o.files_read,
         o.files_modified,
         o.prompt_number,
+        o.generated_by_provider,
         o.created_at,
         o.created_at_epoch
       FROM observations o
@@ -125,6 +126,7 @@ export class PaginationHelper {
         ss.completed,
         ss.next_steps,
         ss.project,
+        ss.generated_by_provider,
         ss.created_at,
         ss.created_at_epoch
       FROM session_summaries ss
