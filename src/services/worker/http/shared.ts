@@ -56,6 +56,17 @@ export interface ObservationPayload {
   toolUseId?: string;
 }
 
+/**
+ * Match a tool name against the comma-separated CLAUDE_MEM_SKIP_TOOLS list.
+ * An entry ending in `__` (e.g. `mcp__grafana__`) matches a whole MCP server
+ * by prefix; every other entry is an exact tool-name match.
+ */
+export function isToolSkipped(toolName: string, skipToolsCsv: string): boolean {
+  return skipToolsCsv
+    .split(',').map(t => t.trim()).filter(Boolean)
+    .some(t => t.endsWith('__') ? toolName.startsWith(t) : toolName === t);
+}
+
 export async function ingestObservation(payload: ObservationPayload): Promise<IngestResult> {
   const { sessionManager, dbManager, eventBroadcaster, ensureGeneratorRunning } = requireContext();
 
@@ -73,10 +84,7 @@ export async function ingestObservation(payload: ObservationPayload): Promise<In
     return { ok: true, status: 'skipped', reason: 'project_excluded' };
   }
 
-  const skipTools = new Set(
-    settings.CLAUDE_MEM_SKIP_TOOLS.split(',').map(t => t.trim()).filter(Boolean)
-  );
-  if (skipTools.has(payload.toolName)) {
+  if (isToolSkipped(payload.toolName, settings.CLAUDE_MEM_SKIP_TOOLS)) {
     return { ok: true, status: 'skipped', reason: 'tool_excluded' };
   }
 
