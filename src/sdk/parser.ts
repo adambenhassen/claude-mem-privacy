@@ -116,10 +116,18 @@ function parseObservationBlocks(text: string, correlationId?: string | number): 
       logger.error('PARSER', `Observation missing type field, using "${fallbackType}"`, { correlationId });
     }
 
-    const cleanedConcepts = concepts.filter(c => c !== finalType);
+    // Weaker models echo the prompt's "id: description" concept guidance
+    // verbatim instead of the bare id, which then never matches the exact-id
+    // context-retrieval filter. Normalize to the bare id (strip any
+    // "id: ..." gloss), drop the observation type, and dedupe.
+    const cleanedConcepts = Array.from(new Set(
+      concepts
+        .map(c => c.split(':')[0].trim())
+        .filter(c => c && c !== finalType)
+    ));
 
     if (cleanedConcepts.length !== concepts.length) {
-      logger.debug('PARSER', 'Removed observation type from concepts array', {
+      logger.debug('PARSER', 'Normalized concepts to vocabulary ids', {
         correlationId,
         type: finalType,
         originalConcepts: concepts,

@@ -77,6 +77,21 @@ describe('parseAgentXml — observations', () => {
     expect(result[0].concepts).toEqual(['dependency-injection']);
   });
 
+  it('strips the "id: description" gloss models echo from the prompt', () => {
+    const xml = `<observation>
+      <type>refactor</type>
+      <concepts>
+        <concept>how-it-works: token refresh runs on a timer</concept>
+        <concept>gotcha</concept>
+        <concept>how-it-works: duplicate id, different gloss</concept>
+      </concepts>
+    </observation>`;
+
+    const result = expectObservation(xml);
+
+    expect(result[0].concepts).toEqual(['how-it-works', 'gotcha']);
+  });
+
   it('filters out ghost observations where all content fields are null (#1625)', () => {
     const xml = `<observation>
       <type>bugfix</type>

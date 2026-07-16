@@ -182,6 +182,29 @@ describe('SessionStore', () => {
     expect(stored?.memory_session_id).toBe(memoryId);
   });
 
+  it('apportions batch discovery_tokens across the observations it produced', () => {
+    const memoryId = 'memory-apportion-1';
+    const sdkId = store.createSDKSession('claude-apportion-1', 'test-project', 'p');
+    store.ensureMemorySessionIdRegistered(sdkId, memoryId, 37742);
+
+    const mkObs = (title: string) => ({
+      type: 'discovery', title, subtitle: null, facts: [], narrative: title,
+      concepts: [], files_read: [], files_modified: [],
+    });
+
+    const result = store.storeObservations(
+      memoryId, 'test-project',
+      [mkObs('a'), mkObs('b'), mkObs('c'), mkObs('d')],
+      null, 1, 1000,
+    );
+
+    const tokens = result.observationIds.map(
+      id => (store.getObservationById(id) as { discovery_tokens: number }).discovery_tokens
+    );
+    // 1000 / 4 observations → 250 each, not 1000 replicated onto every row.
+    expect(tokens).toEqual([250, 250, 250, 250]);
+  });
+
   it('should store summary with timestamp override', () => {
     const claudeId = 'claude-sess-sum';
     const memoryId = 'memory-sess-sum';

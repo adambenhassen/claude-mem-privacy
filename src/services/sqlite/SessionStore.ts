@@ -74,6 +74,66 @@ export class SessionStore {
     this.dropWorkerPidColumn();
     this.ensurePendingMessagesAgentColumns();
     this.ensureSessionsConversationHistoryColumn();
+    this.normalizeConceptVocabularyPrefixes();
+    this.apportionBatchDiscoveryTokens();
+  }
+
+  /**
+   * Historically the whole batch's model-token spend was stamped onto every
+   * observation the batch produced (not divided), so a 9-observation batch
+   * wrote the full batch cost onto all 9 rows. The context "work investment"
+   * sum then counted each batch up to N times. Apportion each existing row's
+   * discovery_tokens across its batch (same memory_session_id + created_at_epoch)
+   * to match the new per-observation write path.
+   *
+   * Not idempotent (re-dividing would compound), so it is gated on
+   * PRAGMA user_version and bumps it once applied.
+   */
+  private apportionBatchDiscoveryTokens(): void {
+    const { user_version } = this.db.query('PRAGMA user_version').get() as { user_version: number };
+    if (user_version >= 1) {
+      return;
+    }
+    this.db.run(`
+      WITH batch_counts AS (
+        SELECT memory_session_id, created_at_epoch, COUNT(*) AS cnt
+        FROM observations
+        GROUP BY memory_session_id, created_at_epoch
+      )
+      UPDATE observations
+      SET discovery_tokens = CAST(ROUND(discovery_tokens * 1.0 / bc.cnt) AS INTEGER)
+      FROM batch_counts bc
+      WHERE bc.memory_session_id = observations.memory_session_id
+        AND bc.created_at_epoch = observations.created_at_epoch
+        AND bc.cnt > 1
+        AND observations.discovery_tokens > 0
+    `);
+    this.db.run('PRAGMA user_version = 1');
+  }
+
+  /**
+   * Weaker generation models echoed the prompt's "id: description" concept
+   * guidance verbatim, so stored concepts became e.g. "how-it-works: <text>"
+   * instead of the bare "how-it-works". The context-retrieval filter matches
+   * concept ids exactly, so those rows silently dropped out of injected
+   * context and froze each project's timeline. Strip the "<id>: ..." suffix
+   * back to the bare id (mode-agnostic: preserve every id, only remove the
+   * gloss). Idempotent — the EXISTS guard skips rows with no colon left.
+   */
+  private normalizeConceptVocabularyPrefixes(): void {
+    this.db.run(`
+      UPDATE observations
+      SET concepts = (
+        SELECT json_group_array(v) FROM (
+          SELECT DISTINCT trim(substr(value, 1, instr(value || ':', ':') - 1)) AS v
+          FROM json_each(observations.concepts)
+        )
+      )
+      WHERE concepts IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM json_each(observations.concepts) WHERE value LIKE '%:%'
+        )
+    `);
   }
 
   /**
@@ -2087,6 +2147,14 @@ export class SessionStore {
     const timestampEpoch = overrideTimestampEpoch ?? Date.now();
     const timestampIso = new Date(timestampEpoch).toISOString();
 
+    // discoveryTokens is the model's token spend for the whole batch. Apportion
+    // it across the observations the batch produced so each row carries its own
+    // share — otherwise every sibling row claims the full batch cost and the
+    // context "work investment" sum counts one batch up to N times.
+    const perObsDiscoveryTokens = observations.length > 0
+      ? Math.round(discoveryTokens / observations.length)
+      : discoveryTokens;
+
     const storeTx = this.db.transaction(() => {
       const observationIds: number[] = [];
 
@@ -2118,7 +2186,7 @@ export class SessionStore {
           JSON.stringify(safe.files_read),
           JSON.stringify(safe.files_modified),
           promptNumber || null,
-          discoveryTokens,
+          perObsDiscoveryTokens,
           safe.agent_type ?? null,
           safe.agent_id ?? null,
           contentHash,
