@@ -119,11 +119,16 @@ function parseObservationBlocks(text: string, correlationId?: string | number): 
     // Weaker models echo the prompt's "id: description" concept guidance
     // verbatim instead of the bare id, which then never matches the exact-id
     // context-retrieval filter. Normalize to the bare id (strip any
-    // "id: ..." gloss), drop the observation type, and dedupe.
+    // "id: ..." gloss), drop the observation type, and dedupe. When the mode
+    // declares a concept vocabulary, drop anything outside it (type names,
+    // literal "..." placeholders) so only real concepts persist; an empty
+    // vocabulary means the mode does not constrain concepts, so keep them.
+    const validConcepts = new Set(mode.observation_concepts.map(c => c.id));
     const cleanedConcepts = Array.from(new Set(
       concepts
         .map(c => c.split(':')[0].trim())
         .filter(c => c && c !== finalType)
+        .filter(c => validConcepts.size === 0 || validConcepts.has(c))
     ));
 
     if (cleanedConcepts.length !== concepts.length) {

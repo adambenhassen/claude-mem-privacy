@@ -92,6 +92,28 @@ describe('parseAgentXml — observations', () => {
     expect(result[0].concepts).toEqual(['how-it-works', 'gotcha']);
   });
 
+  it('drops non-vocabulary concepts (type leaks, "..." placeholder) when the mode declares a vocab', () => {
+    const modeManager = ModeManager.getInstance() as unknown as { activeMode: unknown };
+    modeManager.activeMode = {
+      observation_types: [{ id: 'bugfix' }, { id: 'discovery' }, { id: 'refactor' }],
+      observation_concepts: [{ id: 'how-it-works' }, { id: 'gotcha' }],
+    };
+
+    const xml = `<observation>
+      <type>bugfix</type>
+      <concepts>
+        <concept>how-it-works</concept>
+        <concept>discovery</concept>
+        <concept>...</concept>
+        <concept>gotcha</concept>
+      </concepts>
+    </observation>`;
+
+    const result = expectObservation(xml);
+
+    expect(result[0].concepts).toEqual(['how-it-works', 'gotcha']);
+  });
+
   it('filters out ghost observations where all content fields are null (#1625)', () => {
     const xml = `<observation>
       <type>bugfix</type>
