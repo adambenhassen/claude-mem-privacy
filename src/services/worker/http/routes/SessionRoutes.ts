@@ -21,7 +21,7 @@ import { USER_SETTINGS_PATH } from '../../../../shared/paths.js';
 import { resolveProviderOverride, type ProjectOverride } from '../../../../shared/provider-project-override.js';
 import { getProjectContext } from '../../../../utils/project-name.js';
 import { normalizePlatformSource } from '../../../../shared/platform-source.js';
-import { handleGeneratorExit } from '../../session/GeneratorExitHandler.js';
+import { handleGeneratorExit, shouldRedrainOnExit } from '../../session/GeneratorExitHandler.js';
 import { telemetryBuffer } from '../../../telemetry/buffer.js';
 import { instrument } from '../../../telemetry/instrument.js';
 import { SessionCompletionHandler } from '../../session/SessionCompletionHandler.js';
@@ -310,7 +310,11 @@ export class SessionRoutes extends BaseRouteHandler {
             ide: session.platformSource,
           });
         }
-        const redrain = session.pendingRedrain === true;
+        const redrain = shouldRedrainOnExit(
+          reason,
+          session.pendingRedrain === true,
+          this.sessionManager.getMessageBuffer().getPendingCount(session.sessionDbId)
+        );
         session.pendingRedrain = false;
         await handleGeneratorExit(session, reason, {
           sessionManager: this.sessionManager,

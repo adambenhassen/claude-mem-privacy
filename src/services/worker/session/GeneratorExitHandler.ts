@@ -26,6 +26,22 @@ export interface GeneratorExitDependencies {
  * This is not the old respawn-on-pending retry storm: redrains are backoff-
  * paced and armed only from the failure path, never from "rows exist".
  */
+/**
+ * Whether an exiting generator's session must be preserved and backoff-redrained
+ * instead of finalized. True for any failure the caller flagged (pendingRedrain)
+ * and for a poisoned abort that still has buffered work: a poisoned respawn
+ * relies on the session's next ingest to restart the generator, but a summarize
+ * is the session's LAST message — without a redrain the row strands until the
+ * next worker restart.
+ */
+export function shouldRedrainOnExit(
+  reason: ActiveSession['abortReason'],
+  pendingRedrain: boolean,
+  pendingCount: number
+): boolean {
+  return pendingRedrain || (reason === 'poisoned' && pendingCount > 0);
+}
+
 export async function handleGeneratorExit(
   session: ActiveSession,
   reason: ActiveSession['abortReason'],

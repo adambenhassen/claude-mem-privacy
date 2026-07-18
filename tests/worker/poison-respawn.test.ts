@@ -37,6 +37,7 @@ mock.module('../../src/services/worker-service.js', () => ({
 }));
 
 import { SessionManager } from '../../src/services/worker/SessionManager.js';
+import { shouldRedrainOnExit } from '../../src/services/worker/session/GeneratorExitHandler.js';
 import { processAgentResponse, INVALID_OUTPUT_RESPAWN_THRESHOLD } from '../../src/services/worker/agents/ResponseProcessor.js';
 import type { DatabaseManager } from '../../src/services/worker/DatabaseManager.js';
 import type { WorkerRef } from '../../src/services/worker/agents/types.js';
@@ -149,6 +150,19 @@ describe('poison respawn (plan-11 #2485)', () => {
       session, makeDbManager(), sm, mockWorker, 0, null, 'TestAgent'
     );
     expect(respawnSpy).toHaveBeenCalledWith(2);
+  });
+
+  it('shouldRedrainOnExit redrains a poisoned exit only when work is still buffered', () => {
+    // Poisoned abort with buffered work (e.g. a stranded summarize): must redrain —
+    // there is no "next ingest" to restart the generator for a session's last message.
+    expect(shouldRedrainOnExit('poisoned', false, 1)).toBe(true);
+    // Poisoned abort with an empty buffer: nothing to reprocess, finalize normally.
+    expect(shouldRedrainOnExit('poisoned', false, 0)).toBe(false);
+    // Failure-path flag still wins regardless of reason.
+    expect(shouldRedrainOnExit(null, true, 0)).toBe(true);
+    // Benign aborts never redrain on their own.
+    expect(shouldRedrainOnExit('idle', false, 1)).toBe(false);
+    expect(shouldRedrainOnExit(null, false, 1)).toBe(false);
   });
 
   it('respawnPoisonedSession preserves the buffer and resets context', async () => {
