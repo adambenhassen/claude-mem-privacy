@@ -67,7 +67,6 @@ function createTestEconomics(overrides: Partial<TokenEconomics> = {}): TokenEcon
     totalReadTokens: 500,
     totalDiscoveryTokens: 5000,
     savings: 4500,
-    savingsPercent: 90,
     ...overrides,
   };
 }
@@ -150,44 +149,25 @@ describe('AgentFormatter', () => {
       expect(joined).toContain('1,500t read');
     });
 
-    it('should include work investment', () => {
+    it('should state work tokens as distilled prior session work', () => {
       const economics = createTestEconomics({ totalDiscoveryTokens: 10000 });
       const config = createTestConfig();
 
       const result = renderAgentContextEconomics(economics, config);
       const joined = result.join('\n');
 
-      expect(joined).toContain('10,000t work');
+      expect(joined).toContain('distilled from 10,000t of session work');
     });
 
-    it('should show savings when config has showSavingsAmount', () => {
-      const economics = createTestEconomics({ savings: 4500, savingsPercent: 90, totalDiscoveryTokens: 5000 });
-      const config = createTestConfig({ showSavingsAmount: true, showSavingsPercent: false });
-
-      const result = renderAgentContextEconomics(economics, config);
-      const joined = result.join('\n');
-
-      expect(joined).toContain('4,500t saved');
-    });
-
-    it('should show savings percent when config has showSavingsPercent', () => {
-      const economics = createTestEconomics({ savingsPercent: 85, totalDiscoveryTokens: 1000 });
-      const config = createTestConfig({ showSavingsAmount: false, showSavingsPercent: true });
-
-      const result = renderAgentContextEconomics(economics, config);
-      const joined = result.join('\n');
-
-      expect(joined).toContain('85% savings');
-    });
-
-    it('should not show savings when discovery tokens is 0', () => {
-      const economics = createTestEconomics({ totalDiscoveryTokens: 0, savings: 0, savingsPercent: 0 });
+    it('should not make a savings claim', () => {
+      const economics = createTestEconomics({ savings: 4500, totalDiscoveryTokens: 5000 });
       const config = createTestConfig({ showSavingsAmount: true, showSavingsPercent: true });
 
       const result = renderAgentContextEconomics(economics, config);
       const joined = result.join('\n');
 
       expect(joined).not.toContain('savings');
+      expect(joined).not.toContain('saved');
     });
   });
 

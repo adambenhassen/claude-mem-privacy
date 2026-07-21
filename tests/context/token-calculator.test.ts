@@ -101,7 +101,6 @@ describe('TokenCalculator', () => {
       expect(economics.totalReadTokens).toBe(0);
       expect(economics.totalDiscoveryTokens).toBe(0);
       expect(economics.savings).toBe(0);
-      expect(economics.savingsPercent).toBe(0);
     });
 
     it('should count total observations', () => {
@@ -160,7 +159,7 @@ describe('TokenCalculator', () => {
       expect(economics.savings).toBe(489);
     });
 
-    it('should calculate savings percent correctly', () => {
+    it('should compute read, discovery, and savings totals together', () => {
       const observations = [
         createTestObservation({
           title: 'A'.repeat(396), // 396 + 2 = 398 / 4 = 99.5 -> 100 read tokens
@@ -172,17 +171,6 @@ describe('TokenCalculator', () => {
       expect(economics.totalReadTokens).toBe(100);
       expect(economics.totalDiscoveryTokens).toBe(1000);
       expect(economics.savings).toBe(900);
-      expect(economics.savingsPercent).toBe(90);
-    });
-
-    it('should return 0% savings when discovery tokens is 0', () => {
-      const observations = [
-        createTestObservation({ discovery_tokens: 0 }),
-        createTestObservation({ discovery_tokens: null }),
-      ];
-      const economics = calculateTokenEconomics(observations);
-
-      expect(economics.savingsPercent).toBe(0);
     });
 
     it('should handle negative savings correctly', () => {
@@ -195,19 +183,6 @@ describe('TokenCalculator', () => {
       const economics = calculateTokenEconomics(observations);
 
       expect(economics.savings).toBeLessThan(0);
-    });
-
-    it('should round savings percent to nearest integer', () => {
-      const observations = [
-        createTestObservation({
-          title: 'A'.repeat(130), // 130 + 2 = 132 / 4 = 33 read tokens
-          discovery_tokens: 100,
-        }),
-      ];
-      const economics = calculateTokenEconomics(observations);
-
-      expect(economics.totalReadTokens).toBe(33);
-      expect(economics.savingsPercent).toBe(67);
     });
 
     it('should aggregate correctly with multiple observations', () => {

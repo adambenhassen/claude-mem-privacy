@@ -63,25 +63,12 @@ export function renderHumanContextIndex(): string[] {
 
 export function renderHumanContextEconomics(
   economics: TokenEconomics,
-  config: ContextConfig
+  _config: ContextConfig
 ): string[] {
   const output: string[] = [];
 
   output.push(`${colors.bright}${colors.cyan}Context Economics${colors.reset}`);
-  output.push(`${colors.dim}  Loading: ${economics.totalObservations} observations (${economics.totalReadTokens.toLocaleString()} tokens to read)${colors.reset}`);
-  output.push(`${colors.dim}  Work investment: ${economics.totalDiscoveryTokens.toLocaleString()} tokens spent on research, building, and decisions${colors.reset}`);
-
-  if (economics.totalDiscoveryTokens > 0 && (config.showSavingsAmount || config.showSavingsPercent)) {
-    let savingsLine = '  Your savings: ';
-    if (config.showSavingsAmount && config.showSavingsPercent) {
-      savingsLine += `${economics.savings.toLocaleString()} tokens (${economics.savingsPercent}% reduction from reuse)`;
-    } else if (config.showSavingsAmount) {
-      savingsLine += `${economics.savings.toLocaleString()} tokens`;
-    } else {
-      savingsLine += `${economics.savingsPercent}% reduction from reuse`;
-    }
-    output.push(`${colors.green}${savingsLine}${colors.reset}`);
-  }
+  output.push(`${colors.dim}  ${economics.totalObservations} observations (${economics.totalReadTokens.toLocaleString()} tokens) distilled from ${economics.totalDiscoveryTokens.toLocaleString()} tokens of prior session work${colors.reset}`);
   output.push('');
 
   return output;
