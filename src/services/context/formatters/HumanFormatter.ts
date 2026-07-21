@@ -67,7 +67,7 @@ export function renderHumanContextEconomics(
 ): string[] {
   const output: string[] = [];
 
-  output.push(`${colors.bright}${colors.cyan}Context Economics${colors.reset}`);
+  output.push(`${colors.dim}Context Economics${colors.reset}`);
   output.push(`${colors.dim}  Loading: ${economics.totalObservations} observations (${economics.totalReadTokens.toLocaleString()} tokens to read)${colors.reset}`);
   output.push(`${colors.dim}  Work investment: ${economics.totalDiscoveryTokens.toLocaleString()} tokens spent on research, building, and decisions${colors.reset}`);
 
