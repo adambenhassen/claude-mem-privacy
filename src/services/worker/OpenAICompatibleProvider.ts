@@ -99,23 +99,6 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
     return redactForLLMDeep(content, { project });
   }
 
-  /**
-   * Incremental token cost of this response. Chat-completions requests re-send
-   * the full conversation history, so raw prompt_tokens counts every prior
-   * turn again on every call — summing it across a session multi-counts the
-   * same transcript dozens of times. Count only the prompt growth since the
-   * previous request plus the completion. Falls back to total_tokens when the
-   * gateway omits the input/output breakdown (first request then counts full).
-   */
-  protected discoveryDelta(session: ActiveSession, result: ProviderQueryResult): number {
-    if (typeof result.inputTokens === 'number' && typeof result.outputTokens === 'number') {
-      const delta = Math.max(0, result.inputTokens - (session.lastPromptTokens ?? 0)) + result.outputTokens;
-      session.lastPromptTokens = result.inputTokens;
-      return delta;
-    }
-    return result.tokensUsed || 0;
-  }
-
   async startSession(session: ActiveSession, worker?: WorkerRef): Promise<void> {
     const config = this.getConfig(session.projectModel);
     const { apiKey, model } = config;
@@ -203,7 +186,7 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
       session.lastUsage = this.buildLastUsage(initResponse);
       await processAgentResponse(
         initResponse.content, session, this.dbManager, this.sessionManager,
-        worker, this.discoveryDelta(session, initResponse), null, this.providerName, undefined, initResponse.servedModel ?? model
+        worker, tokensUsed, null, this.providerName, undefined, initResponse.servedModel ?? model
       );
     } else {
       logger.error('SDK', `Empty ${this.providerName} init response - session may lack context`, {
@@ -242,22 +225,21 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
     session.lastGeneratorSource = 'ingest';
     const obsResponse = await this.query(session.conversationHistory, config);
 
-    let discoveryTokens = 0;
+    let tokensUsed = 0;
     if (obsResponse.content) {
       session.conversationHistory.push({ role: 'assistant', content: obsResponse.content });
-      const tokensUsed = obsResponse.tokensUsed || 0;
+      tokensUsed = obsResponse.tokensUsed || 0;
       session.cumulativeInputTokens += Math.floor(tokensUsed * 0.7);
       session.cumulativeOutputTokens += Math.floor(tokensUsed * 0.3);
       // Both sides or nothing: a backend reporting only one of the two counts
       // must not produce a half-real event (input=0 → compression_ratio 0.0).
       session.lastUsage = this.buildLastUsage(obsResponse);
-      discoveryTokens = this.discoveryDelta(session, obsResponse);
     }
 
     if (obsResponse.content || this.forwardEmptyMessageResponse) {
       await processAgentResponse(
         obsResponse.content || '', session, this.dbManager, this.sessionManager,
-        worker, discoveryTokens, originalTimestamp, this.providerName, lastCwd, obsResponse.servedModel ?? config.model
+        worker, tokensUsed, originalTimestamp, this.providerName, lastCwd, obsResponse.servedModel ?? config.model
       );
     } else {
       logger.warn('SDK', `Empty ${this.providerName} observation response, leaving queue intact`, {
@@ -292,20 +274,19 @@ export abstract class OpenAICompatibleProvider<TConfig extends { apiKey: string;
     session.lastGeneratorSource = 'summarize';
     const summaryResponse = await this.query(session.conversationHistory, config);
 
-    let discoveryTokens = 0;
+    let tokensUsed = 0;
     if (summaryResponse.content) {
       session.conversationHistory.push({ role: 'assistant', content: summaryResponse.content });
-      const tokensUsed = summaryResponse.tokensUsed || 0;
+      tokensUsed = summaryResponse.tokensUsed || 0;
       session.cumulativeInputTokens += Math.floor(tokensUsed * 0.7);
       session.cumulativeOutputTokens += Math.floor(tokensUsed * 0.3);
       session.lastUsage = this.buildLastUsage(summaryResponse);
-      discoveryTokens = this.discoveryDelta(session, summaryResponse);
     }
 
     if (summaryResponse.content || this.forwardEmptyMessageResponse) {
       await processAgentResponse(
         summaryResponse.content || '', session, this.dbManager, this.sessionManager,
-        worker, discoveryTokens, originalTimestamp, this.providerName, lastCwd, summaryResponse.servedModel ?? config.model
+        worker, tokensUsed, originalTimestamp, this.providerName, lastCwd, summaryResponse.servedModel ?? config.model
       );
     } else {
       logger.warn('SDK', `Empty ${this.providerName} summary response, leaving queue intact`, {

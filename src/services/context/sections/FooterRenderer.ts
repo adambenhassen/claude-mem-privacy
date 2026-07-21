@@ -19,7 +19,7 @@ export function renderFooter(
   config: ContextConfig,
   forHuman: boolean
 ): string[] {
-  if (!shouldShowContextEconomics(config) || economics.totalDiscoveryTokens <= 0) {
+  if (!shouldShowContextEconomics(config) || economics.totalDiscoveryTokens <= 0 || economics.savings <= 0) {
     return [];
   }
 

@@ -78,6 +78,7 @@ export interface TokenEconomics {
   totalReadTokens: number;
   totalDiscoveryTokens: number;
   savings: number;
+  savingsPercent: number;
 }
 
 export interface PriorMessages {

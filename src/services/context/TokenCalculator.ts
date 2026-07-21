@@ -22,15 +22,17 @@ export function calculateTokenEconomics(observations: Observation[]): TokenEcono
     return sum + (obs.discovery_tokens || 0);
   }, 0);
 
-  // Kept for telemetry (tokens_saved_vs_naive); no longer shown as a "savings"
-  // claim — discovery_tokens is a generation-cost proxy, not user savings.
   const savings = totalDiscoveryTokens - totalReadTokens;
+  const savingsPercent = totalDiscoveryTokens > 0
+    ? Math.round((savings / totalDiscoveryTokens) * 100)
+    : 0;
 
   return {
     totalObservations,
     totalReadTokens,
     totalDiscoveryTokens,
     savings,
+    savingsPercent,
   };
 }
 

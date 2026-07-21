@@ -42,14 +42,22 @@ export function renderAgentLegend(): string[] {
 
 export function renderAgentContextEconomics(
   economics: TokenEconomics,
-  _config: ContextConfig
+  config: ContextConfig
 ): string[] {
   const output: string[] = [];
 
   const parts: string[] = [
     `${economics.totalObservations} obs (${economics.totalReadTokens.toLocaleString()}t read)`,
-    `distilled from ${economics.totalDiscoveryTokens.toLocaleString()}t of session work`
+    `${economics.totalDiscoveryTokens.toLocaleString()}t work`
   ];
+
+  if (economics.totalDiscoveryTokens > 0 && (config.showSavingsAmount || config.showSavingsPercent)) {
+    if (config.showSavingsPercent) {
+      parts.push(`${economics.savingsPercent}% savings`);
+    } else if (config.showSavingsAmount) {
+      parts.push(`${economics.savings.toLocaleString()}t saved`);
+    }
+  }
 
   output.push(`Stats: ${parts.join(' | ')}`);
   output.push('');

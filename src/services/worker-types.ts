@@ -53,8 +53,6 @@ export interface ActiveSession {
   lastPromptSentAt?: number | null;
   /** Real token usage and provider-reported cost from the latest model response (never estimated) — telemetry tokens_input/output/cost_usd. */
   lastUsage?: { input: number; output: number; costUsd?: number } | null;
-  /** prompt_tokens of the previous OpenAI-compatible request — chat-completions re-sends full history each call, so discovery_tokens counts only the prompt growth since this mark. */
-  lastPromptTokens?: number;
   /** What triggered the running generator ('init' | 'ingest' | 'summarize') — telemetry hook. */
   lastGeneratorSource?: string;
   /** Model id resolved when the generator started — error-path telemetry, where no response model exists. */
